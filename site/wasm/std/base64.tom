@@ -1,15 +1,16 @@
 # Base64 (RFC 4648), modelled on Python's `base64` module (`import base64` or `from base64 import b64encode`). Binary data
-# is a `list[int]` of byte values 0-255 until the language has a bytes type:
+# is `bytes`:
 #
-#     print(base64.b64encode([104, 101, 108, 108, 111]))     # aGVsbG8=
-#     print(base64.b64decode('aGVsbG8='))                    # [104, 101, 108, 108, 111]
+#     print(base64.b64encode(b'hello'))          # aGVsbG8=
+#     print(base64.b64decode('aGVsbG8='))        # b'hello'
 #
-#   b64encode(data) -> str              the standard alphabet (A-Z a-z 0-9 + /) with '=' padding to a multiple of 4
-#   b64decode(text) -> list[int]        the inverse
-#   urlsafe_b64encode(data) -> str      the same with '-' and '_' instead of '+' and '/' (padding kept)
-#   urlsafe_b64decode(text) -> list[int]
+#   b64encode(data: bytes) -> str       the standard alphabet (A-Z a-z 0-9 + /) with '=' padding to a multiple of 4
+#   b64decode(text: str) -> bytes       the inverse
+#   urlsafe_b64encode(data: bytes) -> str   the same with '-' and '_' instead of '+' and '/' (padding kept)
+#   urlsafe_b64decode(text: str) -> bytes
 #
-# Encoding a number outside 0-255 is a ValueError. Decoding is strict (Python's `validate=True`): a character outside
+# Unlike Python, the encoders return str, not bytes: base64 text goes into JSON, URLs and headers, and Tomato text is
+# UTF-8, so it can be used there as it is. Decoding is strict (Python's `validate=True`): a character outside
 # the alphabet (so no spaces or line breaks, and '-' '_' are not accepted by the standard decoder, nor '+' '/' by the
 # urlsafe one), a length that is not a multiple of 4, and padding in the wrong place are all a ValueError. As in
 # Python, the unused bits of the last character are not required to be zero (`QR==` decodes like `QQ==`).
@@ -18,10 +19,7 @@
 def _alphabet(urlsafe: bool) -> str:
     return 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' + ('-_' if urlsafe else '+/')
 
-def _encode(data: list[int], urlsafe: bool) -> str:
-    for b in data:
-        if b < 0 or b > 255:
-            raise ValueError(f'a byte must be a whole number from 0 to 255, but got {b}', 'E391')
+def _encode(data: bytes, urlsafe: bool) -> str:
     letters = _alphabet(urlsafe)
     parts: list[str] = []
     count = len(data)
@@ -38,7 +36,7 @@ def _encode(data: list[int], urlsafe: bool) -> str:
         parts.append(letters[n // 262144] + letters[(n // 4096) % 64] + letters[(n // 64) % 64] + '=')
     return ''.join(parts)
 
-def _decode(text: str, urlsafe: bool) -> list[int]:
+def _decode(text: str, urlsafe: bool) -> bytes:
     letters = _alphabet(urlsafe)
     values: list[int] = []      # the 6-bit value of every character before the padding
     padding = 0
@@ -67,20 +65,20 @@ def _decode(text: str, urlsafe: bool) -> list[int]:
     elif left == 3:
         n = values[i] * 262144 + values[i + 1] * 4096 + values[i + 2] * 64
         out.extend([n // 65536, (n // 256) % 256])
-    return out
+    return bytes(out)
 
 # The base64 text of the bytes, in the standard alphabet with '=' padding.
-export def b64encode(data: list[int]) -> str:
+export def b64encode(data: bytes) -> str:
     return _encode(data, False)
 
 # The bytes of a base64 text; a ValueError for anything the standard alphabet and padding do not allow.
-export def b64decode(text: str) -> list[int]:
+export def b64decode(text: str) -> bytes:
     return _decode(text, False)
 
 # Like b64encode with '-' and '_' in place of '+' and '/', so the text can go into a URL or a file name.
-export def urlsafe_b64encode(data: list[int]) -> str:
+export def urlsafe_b64encode(data: bytes) -> str:
     return _encode(data, True)
 
 # Like b64decode for the urlsafe alphabet.
-export def urlsafe_b64decode(text: str) -> list[int]:
+export def urlsafe_b64decode(text: str) -> bytes:
     return _decode(text, True)

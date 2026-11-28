@@ -2,30 +2,11 @@
 from json import loads, dumps, loads_msgpack, dumps_msgpack, JSONEncodeError
 from value import Value, Bin, Ext, Timestamp, Int, Float, Str, List, Dict, Null, Bool
 
-def hexs(b: list[int]) -> str:
-    digits = '0123456789abcdef'
-    out: list[str] = []
-    for x in b:
-        out.append(digits[x // 16] + digits[x % 16])
-    return ''.join(out)
-
-def nib(c: str) -> int:
-    n = ord(c)
-    if n >= 97:
-        return n - 87
-    return n - 48
-
-def unhex(s: str) -> list[int]:
-    out: list[int] = []
-    for i in range(len(s) // 2):
-        out.append(nib(s[2 * i]) * 16 + nib(s[2 * i + 1]))
-    return out
-
 def enc(j: Value):
-    print(hexs(dumps_msgpack(j)))
+    print(dumps_msgpack(j).hex())
 
 def dec(h: str):
-    print(h[0:24], '->', dumps(loads_msgpack(unhex(h))))
+    print(h[0:24], '->', dumps(loads_msgpack(bytes.fromhex(h))))
 
 @main
 def main():
@@ -44,34 +25,34 @@ def main():
     enc(Str('a'))
     enc(Str('é€😀'))
     enc(Str('x' * 31))
-    print(hexs(dumps_msgpack(Str('x' * 32)))[0:8], len(dumps_msgpack(Str('x' * 32))))
-    print(hexs(dumps_msgpack(Str('x' * 255)))[0:8], len(dumps_msgpack(Str('x' * 255))))
-    print(hexs(dumps_msgpack(Str('x' * 256)))[0:8], len(dumps_msgpack(Str('x' * 256))))
-    print(hexs(dumps_msgpack(Str('x' * 65536)))[0:10], len(dumps_msgpack(Str('x' * 65536))))
+    print(dumps_msgpack(Str('x' * 32)).hex()[0:8], len(dumps_msgpack(Str('x' * 32))))
+    print(dumps_msgpack(Str('x' * 255)).hex()[0:8], len(dumps_msgpack(Str('x' * 255))))
+    print(dumps_msgpack(Str('x' * 256)).hex()[0:8], len(dumps_msgpack(Str('x' * 256))))
+    print(dumps_msgpack(Str('x' * 65536)).hex()[0:10], len(dumps_msgpack(Str('x' * 65536))))
     enc(List([]))
     enc(List([Int(1), Int(2), Int(3)]))
     big: list[Value] = []
     for i in range(15):
         big.append(Null())
-    print(hexs(dumps_msgpack(List(big)))[0:4])
+    print(dumps_msgpack(List(big)).hex()[0:4])
     big.append(Null())
-    print(hexs(dumps_msgpack(List(big)))[0:8])
+    print(dumps_msgpack(List(big)).hex()[0:8])
     enc(Dict({}))
     enc(Dict({'a': Int(1), 'b': List([Bool(True)])}))
     wide: dict[str, Value] = {}
     for i in range(16):
         wide['k' + str(i)] = Null()
-    print(hexs(dumps_msgpack(Dict(wide)))[0:8])
-    enc(Bin([]))
-    enc(Bin([1, 2, 255]))
-    print(hexs(dumps_msgpack(Bin([7] * 256)))[0:8])
-    enc(Ext(5, [1]))
-    enc(Ext(5, [1, 2]))
-    enc(Ext(-5, [1, 2, 3, 4]))
-    enc(Ext(1, [1, 2, 3]))
-    enc(Ext(127, [0] * 8))
-    enc(Ext(-128, [0] * 16))
-    enc(Ext(9, [0] * 3))
+    print(dumps_msgpack(Dict(wide)).hex()[0:8])
+    enc(Bin(b''))
+    enc(Bin(bytes([1, 2, 255])))
+    print(dumps_msgpack(Bin(bytes([7] * 256))).hex()[0:8])
+    enc(Ext(5, bytes([1])))
+    enc(Ext(5, bytes([1, 2])))
+    enc(Ext(-5, bytes([1, 2, 3, 4])))
+    enc(Ext(1, bytes([1, 2, 3])))
+    enc(Ext(127, bytes([0] * 8)))
+    enc(Ext(-128, bytes([0] * 16)))
+    enc(Ext(9, bytes([0] * 3)))
     enc(Timestamp(0))
     enc(Timestamp(4294967295))
     enc(Timestamp(1, 500))
@@ -121,15 +102,15 @@ def main():
     dec('82a16101a16102')
     print('-- decoded kinds')
     for h in ['c4020aff', 'd40501', 'd5050102', 'c703050102' + '03', 'c80003050102' + '03', 'd6ff00000001', 'd7ff0000000100000002', 'c70cff0000000100000000000000ff', 'ca3fc00000', 'cb3ff8000000000000']:
-        j = loads_msgpack(unhex(h))
+        j = loads_msgpack(bytes.fromhex(h))
         print(h, j.kind())
-    t = loads_msgpack(unhex('d7ff000007d000000001'))
+    t = loads_msgpack(bytes.fromhex('d7ff000007d000000001'))
     print(t.seconds(), t.nanos())
-    t = loads_msgpack(unhex('c70cff3b9ac9ffffffffffffffffff'))
+    t = loads_msgpack(bytes.fromhex('c70cff3b9ac9ffffffffffffffffff'))
     print(t.seconds(), t.nanos())
-    e = loads_msgpack(unhex('d5fb0102'))
+    e = loads_msgpack(bytes.fromhex('d5fb0102'))
     print(e.ext_type(), e.as_bytes())
-    print(loads_msgpack(unhex('c4020aff')).as_bytes())
+    print(loads_msgpack(bytes.fromhex('c4020aff')).as_bytes())
     print('-- round trips')
     doc = loads('{"name":"tomato","tags":["red","round"],"n":3,"f":1500.5,"big":123456789012345678901234567890123,"nested":{"a":[true,false,null,-7]},"u":"日本語 😀"}')
     # the big integer does not fit in 64 bits, so take it out first
@@ -137,23 +118,23 @@ def main():
     fields['big'] = Int(-9223372036854775808)
     back = loads_msgpack(dumps_msgpack(doc))
     print(dumps(back) == dumps(doc), dumps(back))
-    print(hexs(dumps_msgpack(back)) == hexs(dumps_msgpack(doc)))
-    bytes_doc = Dict({'bin': Bin([0, 1, 2, 254, 255]), 'ext': Ext(42, [9, 8, 7]), 'ts': Timestamp(1700000000, 123456789), 'list': List([Bin([]), Timestamp(-5)])})
+    print(dumps_msgpack(back).hex() == dumps_msgpack(doc).hex())
+    bytes_doc = Dict({'bin': Bin(bytes([0, 1, 2, 254, 255])), 'ext': Ext(42, bytes([9, 8, 7])), 'ts': Timestamp(1700000000, 123456789), 'list': List([Bin(b''), Timestamp(-5)])})
     b2 = loads_msgpack(dumps_msgpack(bytes_doc))
     print(b2['bin'].as_bytes(), b2['ext'].ext_type(), b2['ext'].as_bytes(), b2['ts'].seconds(), b2['ts'].nanos(), b2['list'][0].kind(), b2['list'][1].seconds())
-    print(hexs(dumps_msgpack(b2)) == hexs(dumps_msgpack(bytes_doc)))
+    print(dumps_msgpack(b2).hex() == dumps_msgpack(bytes_doc).hex())
     print('-- NaN and infinity: valid MessagePack, kept as floats, and refused by JSON text')
     for h in ['cb7ff8000000000000', 'cbfff0000000000000', 'ca7f800000', 'cb7ff8000000000001', 'ca7fc00001', 'cbfff8000000000001', 'cb7ff0000000000001']:
-        f = loads_msgpack(unhex(h))
-        print(f.kind(), hexs(dumps_msgpack(f)))
+        f = loads_msgpack(bytes.fromhex(h))
+        print(f.kind(), dumps_msgpack(f).hex())
         try:
             print(dumps(f))
         catch JSONEncodeError as e:
             print(e.message)
     print('-- they are not numbers to calculate with: arithmetic stops, int() stops, comparisons follow IEEE')
-    inf = loads_msgpack(unhex('cb7ff0000000000000')).as_float()
-    ninf = loads_msgpack(unhex('cbfff0000000000000')).as_float()
-    nan = loads_msgpack(unhex('cb7ff8000000000000')).as_float()
+    inf = loads_msgpack(bytes.fromhex('cb7ff0000000000000')).as_float()
+    ninf = loads_msgpack(bytes.fromhex('cbfff0000000000000')).as_float()
+    nan = loads_msgpack(bytes.fromhex('cb7ff8000000000000')).as_float()
     for which in range(9):
         try:
             if which == 0:

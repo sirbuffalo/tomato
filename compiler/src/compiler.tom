@@ -3,7 +3,7 @@
 # It takes the syntax tree from compiler/src/parser.tom and writes LLVM IR text that links with the C runtime
 # (runtime/tomato_rt.c). compile_module at the end is the entry point: it loads the built-ins (std/builtin/) and every imported module,
 # collects the classes, interfaces and functions (Mod), then compiles each function (Gen) and adds the type tables.
-# Types are written as short texts: int, str, list[int], @Class, %Interface, U:a;b for a union, str? for str | None, and
+# Types are written as short texts: int, str, bytes, list[int], @Class, %Interface, U:a;b for a union, str? for str | None, and
 # iN / uN for fixed-width integers. Heap values are reference counted: whoever an expression's value is handed to owns it.
 # A problem with the program is raised as a CompileError and reported by diag.tom.
 from parser import Node, Val, parse, path_text, is_operator_marker, ParseError, val_node, val_nodes, vn, mk, vs, vz, vlist, vtuple, vnodes, vb
@@ -33,13 +33,13 @@ export class CompileError(Error):
         self.col = col
 
 def basic_type(name: str) -> bool:
-    return name == 'int' or name == 'bool' or name == 'str' or name == 'File' or name == 'float'
+    return name == 'int' or name == 'bool' or name == 'str' or name == 'bytes' or name == 'File' or name == 'float'
 
 # the names of the built-in types: no module may define one of them (D108a). Every other built-in name, a function or a class, gives way to
 # a module's own definition of it; a type name written anywhere (a parameter, a field, `x in list`) means the built-in type, so a definition
 # of it could not change it for the whole module and would only make `x: str` and the text 'abc' two different types
 def reserved_type_name(name: str) -> bool:
-    return name in ['int', 'uint', 'float', 'bool', 'str', 'File', 'list', 'dict', 'set', 'tuple']
+    return name in ['int', 'uint', 'float', 'bool', 'str', 'bytes', 'File', 'list', 'dict', 'set', 'tuple']
 
 def is_list(t: str) -> bool:
     return t.startswith('list[') or t.startswith('tuple[')
@@ -109,15 +109,15 @@ def dict_value(t: str) -> str:
 
 # can a key of type t reference other objects (so a table of them can be part of a reference cycle)? Text cannot; objects, tuples, unions and the like can
 def key_holds_refs(t: str) -> bool:
-    return is_rc(t) and t != 'str' and t != 'str?'
+    return is_rc(t) and t != 'str' and t != 'str?' and t != 'bytes' and t != 'bytes?'
 
 # how the runtime table treats a key of type t: 0 a plain word (bool or a fixed-width integer), 1 text, 2 an int (a big number is copied), 3 a reference-counted
 # object (a class instance, tuple, interface value, union or optional) that compiled code hashes and compares, 4 a float
 def key_kind_of(t: str) -> int:
     if t == 'bool' or is_fixed(t):
         return 0
-    if t == 'str':
-        return 1
+    if t == 'str' or t == 'bytes':
+        return 1             # (bytes are laid out as text is, D17e, so the runtime hashes and compares their bytes the same way)
     if t == 'int':
         return 2
     if t == 'float':
@@ -129,7 +129,7 @@ def key_kind_of(t: str) -> int:
 def key_form_problem(t: str) -> str:
     if is_optional(t):
         return key_form_problem(strip_optional(t))
-    if t == 'str' or t == 'int' or t == 'bool' or t == 'float' or t.startswith('@') or t.startswith('%') or is_fixed(t):
+    if t == 'str' or t == 'bytes' or t == 'int' or t == 'bool' or t == 'float' or t.startswith('@') or t.startswith('%') or is_fixed(t):
         return ''
     if is_union(t):
         for member in union_members(t):
@@ -233,7 +233,9 @@ def dyn_seq() -> str:
     return 'list[int]'
 
 def box_kind(member: str) -> int:
-    # how the runtime prints a boxed value: 1 whole number, 3 float, 4 text, 5 bool, 6 anything else
+    # how the runtime prints a boxed value: 1 whole number, 3 float, 4 text, 5 bool, 8 bytes, 6 anything else
+    if member == 'bytes':
+        return 8
     if member == 'int':
         return 1
     if member == 'float':
@@ -454,7 +456,7 @@ def is_value_optional(t: str) -> bool:
 
 def is_rc(t: str) -> bool:
     # heap values are reference counted; None is the null pointer, which counting ignores (D23b)
-    return t == 'str' or is_task(t) or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t) or is_dyn(t) or is_mtuple(t) or t == 'File'
+    return t == 'str' or t == 'bytes' or is_task(t) or is_list(t) or is_dict(t) or is_set(t) or is_class(t) or is_iface(t) or t == 'None' or is_optional(t) or is_union(t) or is_dyn(t) or is_mtuple(t) or t == 'File'
 
 def shown_generic(name: str) -> str:
     # a copy of a generic class, as Box[int]: its type arguments are kept in the internal form inside the name
@@ -1279,6 +1281,8 @@ class Mod:
     errors: list[str] = []        # the messages of std/errors.txt: the code of a message is its line number (release mode)
     strings: list[str] = []       # the text constants, in the order they are numbered
     string_index: dict[str, int] = {}
+    byte_consts: list[str] = []   # the bytes constants (b'...'), as hex digits, in the order they are numbered
+    byte_index: dict[str, int] = {}
     infos: list[FuncInfo] = []
     llvm_decls: list[FuncInfo] = []    # the `!name(...)` functions the program declares (D27a)
     consts: dict[str, Node] = {}  # module constants (export const pi = 3.14): the literal each program-wide name stands for
@@ -1417,6 +1421,14 @@ class Mod:
             self.string_index[s] = len(self.strings)
             self.strings.append(s)
         return f'@.str.{self.string_index[s]}'
+
+    def intern_bytes(self, digits: str) -> str:
+        # a bytes constant, given as hex digits (two for each byte, as the lexer writes a b'...' literal): laid out as a text is
+        # (D17e), with its count of characters equal to its length
+        if digits not in self.byte_index:
+            self.byte_index[digits] = len(self.byte_consts)
+            self.byte_consts.append(digits)
+        return f'@.bytes.{self.byte_index[digits]}'
 
     def helper(self, kind: str, ty: str, line: int) -> FuncInfo:
         # a function the compiler writes in Tomato for one kind of value (showing a list, sorting one, ...), made the first time it
@@ -2298,7 +2310,7 @@ class Mod:
             elif members[1].fields[0].text != 'None':
                 return ''
             wrapped = self.type_name(vn(other))
-            if not (wrapped == 'str' or wrapped == 'int' or wrapped == 'float' or wrapped == 'bool' or is_list(wrapped) or is_dict(wrapped) or is_set(wrapped) or is_class(wrapped) or is_iface(wrapped) or is_mtuple(wrapped)):
+            if not (wrapped == 'str' or wrapped == 'bytes' or wrapped == 'int' or wrapped == 'float' or wrapped == 'bool' or is_list(wrapped) or is_dict(wrapped) or is_set(wrapped) or is_class(wrapped) or is_iface(wrapped) or is_mtuple(wrapped)):
                 return ''
             return f'{wrapped}?'
         if name == 'task' and t.fields[2].tag == 'n' and t.fields[1].tag == 'z':
@@ -2402,6 +2414,15 @@ def string_global(index: int, s: str) -> str:
     size = str(nbytes + 1)
     body = escape_text(s)
     return '@.str.' + str(index) + ' = private constant { i64, i64, i64, i64, [' + size + ' x i8] } { i64 -1, i64 1, i64 ' + str(nbytes) + ', i64 ' + str(len(s)) + ', [' + size + ' x i8] c"' + body + '\\00" }'
+
+def bytes_global(index: int, digits: str) -> str:
+    n = len(digits) // 2
+    hexd = '0123456789abcdef'
+    body = ''
+    for k in range(n):
+        body += escape_byte(hexd.find(digits[2 * k]) * 16 + hexd.find(digits[2 * k + 1]))
+    size = str(n + 1)
+    return '@.bytes.' + str(index) + ' = private constant { i64, i64, i64, i64, [' + size + ' x i8] } { i64 -1, i64 1, i64 ' + str(n) + ', i64 ' + str(n) + ', [' + size + ' x i8] c"' + body + '\\00" }'
 
 def string_c(index: int, s: str) -> str:
     # a plain C copy, which is what tomato_fail prints
@@ -3684,6 +3705,8 @@ class Gen:
             return 'bool'
         if k == 'StrLit':
             return 'str'
+        if k == 'BytesLit':
+            return 'bytes'
         if k == 'Name':
             name = n.fields[0].text
             if name in self.slots:
@@ -5389,6 +5412,8 @@ class Gen:
             return ex('0', 'bool')
         if k == 'StrLit':
             return ex(self.mod.intern(n.fields[0].text), 'str')
+        if k == 'BytesLit':
+            return ex(self.mod.intern_bytes(n.fields[0].text), 'bytes')
         if k == 'Name':
             name = n.fields[0].text
             if name == 'None' and name not in self.slots:
@@ -5601,9 +5626,9 @@ class Gen:
             self.release(a)
             self.release(b)
             return ex(r, a.ty)
-        if op == '*' and (is_list(a.ty) or a.ty == 'str') and is_numeric(b.ty):
+        if op == '*' and (is_list(a.ty) or a.ty == 'str' or a.ty == 'bytes') and is_numeric(b.ty):
             return self.repeat_value(a, b, line)
-        if op == '*' and (is_list(b.ty) or b.ty == 'str') and is_numeric(a.ty):
+        if op == '*' and (is_list(b.ty) or b.ty == 'str' or b.ty == 'bytes') and is_numeric(a.ty):
             return self.repeat_value(b, a, line)
         return ex('', '')
 
@@ -5612,6 +5637,8 @@ class Gen:
         r = self.tmp('repeated')
         if seq.ty == 'str':
             self.emit(f'{r} = call ptr @tomato_str_repeat(ptr {seq.reg}, i64 {self.int_raw(n, [seq])})')
+        elif seq.ty == 'bytes':
+            self.emit(f'{r} = call ptr @tomato_bytes_repeat(ptr {seq.reg}, i64 {self.int_raw(n, [seq])})')
         else:
             rc = list_flags(seq.ty)
             self.emit(f'{r} = call ptr @tomato_list_repeat(ptr {seq.reg}, i64 {self.int_raw(n, [seq])}, i32 {rc})')
@@ -5679,6 +5706,8 @@ class Gen:
         if len(args) != 1:
             raise CompileError('list() takes exactly one argument: a list or a range', line)
         v = self.unwrap(self.expr(args[0]), line)
+        if v.ty == 'bytes':
+            return self.builtin_call('_bytes_list', [v], line)
         if is_class(v.ty) and self.mod.has_op(v.ty[1:], 'iter'):
             return self.call_helper(self.mod.helper('tolist', v.ty, line), [v])
         if is_list(v.ty) and not v.ty.startswith('tuple['):
@@ -5688,6 +5717,25 @@ class Gen:
             self.release(v)
             return ex(r, v.ty)
         raise CompileError(f'list() takes a list or something that can be looped over (a range, or an object with an @iter method), but this is {shown(v.ty)}', line)
+
+    def bytes_call(self, args: list[Node], line: int) -> Ex:
+        # bytes() is empty, bytes(n) is n zero bytes, bytes(items) the bytes of a list of ints from 0 to 255, bytes(b) is b (D17e)
+        if len(args) == 0:
+            return ex(self.mod.intern_bytes(''), 'bytes')
+        if len(args) != 1:
+            raise CompileError('bytes() takes at most one argument: bytes(), bytes(count), bytes(list_of_ints) or bytes(data)', line)
+        v = self.unwrap(self.expr(args[0], 'list[int]' if args[0].kind == 'ListLit' else ''), line)    # (bytes([]) is a list of ints)
+        if is_fixed(v.ty):
+            v = self.resize(v, 'int')
+        if v.ty == 'bytes':
+            return v
+        if v.ty == 'int':
+            return self.builtin_call('_bytes_zeros', [v], line)
+        if v.ty == 'list[int]' or v.ty == 'tuple[int]':
+            return self.builtin_call('_bytes_of_list', [v], line)
+        if v.ty == 'str':
+            raise CompileError("bytes() cannot take text, because text has no single byte form\nencode it: s.encode() gives its UTF-8 bytes", line)
+        raise CompileError(f'bytes() takes a count (int), a list of ints from 0 to 255 or bytes, but this is {shown(v.ty)}', line)
 
     def list_builtin(self, name: str, args: list[Node], line: int) -> Ex:
         # sorted, reversed, sum, min and max of a list
@@ -5712,6 +5760,8 @@ class Gen:
             if len(args) != 1:
                 raise CompileError(f'{name}() takes one list', line)
             lst = self.unwrap(self.expr(args[0]), line)
+            if lst.ty == 'bytes':
+                lst = self.builtin_call('_bytes_list', [lst], line)      # sum(b), max(b), sorted(b): of its byte values
         if is_class(lst.ty):
             if name == 'reversed':
                 rf = self.mod.find_op(lst.ty[1:], 'reversed')
@@ -5734,7 +5784,7 @@ class Gen:
             return ex(r, lst.ty)
         # objects work through their operator method: @add for sum, @lt for min, max and sorted (D85b)
         by_op = is_class(elem) and self.mod.has_op(elem[1:], 'add' if name == 'sum' else 'lt')
-        if not (elem == 'int' or is_float(elem) or (elem == 'str' and name != 'sum') or by_op):
+        if not (elem == 'int' or is_float(elem) or ((elem == 'str' or elem == 'bytes') and name != 'sum') or by_op):
             wanted = 'numbers or text' if name != 'sum' else 'numbers'
             marker = '@lt' if name != 'sum' else '@add'
             more = f', or of objects of a class with a method marked {marker}'
@@ -5745,7 +5795,7 @@ class Gen:
         if name == 'sorted' and by_op:
             return self.call_helper(self.mod.instance_func(self.mod.resolve('_sorted_lt'), [elem], line), [lst])
         if name == 'sorted':
-            # the runtime sorts a copy: 0 = int, 1 = float, 2 = str
+            # the runtime sorts a copy: 0 = int, 1 = float, 2 = str (and bytes, compared the same way, by their bytes)
             kind = '0' if elem == 'int' else ('3' if elem == 'float' else '2')
             r = self.tmp('sorted')
             self.emit(f'{r} = call ptr @tomato_list_sorted(ptr {lst.reg}, i32 {kind})')
@@ -6475,6 +6525,36 @@ class Gen:
             self.retain(e)
             self.release(s)
             return e
+        if s.ty == 'bytes':
+            # b[i]: the byte, an int from 0 to 255 (D17e)
+            bi = self.want(self.expr_plain(val_node(n.fields[1])), 'int', n.line, 'an index')
+            self.drop_held(held_before)
+            # inline: the length is at byte 16 and the bytes from byte 32 (laid out as a text, runtime/tomato_rt.c); a negative index
+            # counts from the end, and one still outside 0 .. length - 1 is the error (an unsigned compare catches both ends)
+            raw_at = self.int_raw(bi, [s])
+            lenp = self.tmp('blenp')
+            self.emit(f'{lenp} = getelementptr i8, ptr {s.reg}, i64 16')
+            blen = self.tmp('blen')
+            self.emit(f'{blen} = load i64, ptr {lenp}')
+            neg = self.tmp('neg')
+            self.emit(f'{neg} = icmp slt i64 {raw_at}, 0')
+            shifted = self.tmp('shifted')
+            self.emit(f'{shifted} = add i64 {raw_at}, {blen}')
+            pos = self.tmp('pos')
+            self.emit(f'{pos} = select i1 {neg}, i64 {shifted}, i64 {raw_at}')
+            bad_at = self.tmp('oob')
+            self.emit(f'{bad_at} = icmp uge i64 {pos}, {blen}')
+            self.fail_if(bad_at, 'index out of range', [s])
+            base_p = self.tmp('bdata')
+            self.emit(f'{base_p} = getelementptr i8, ptr {s.reg}, i64 32')
+            bp = self.tmp('bp')
+            self.emit(f'{bp} = getelementptr i8, ptr {base_p}, i64 {pos}')
+            b8 = self.tmp('b8')
+            self.emit(f'{b8} = load i8, ptr {bp}')
+            got = self.tmp('byte')
+            self.emit(f'{got} = zext i8 {b8} to i64')
+            self.release(s)
+            return self.tag_small(got)
         s = self.want(s, 'str', n.line, 'the value being indexed')
         i = self.expr_plain(val_node(n.fields[1]))
         i = self.want(i, 'int', n.line, 'an index')
@@ -6512,8 +6592,8 @@ class Gen:
         s = self.unwrap(self.expr(val_node(n.fields[0])), n.line)
         if is_class(s.ty):
             return self.object_slice(s, n)
-        if not (s.ty == 'str' or is_list(s.ty)):
-            raise CompileError(f'only text, lists, tuples and ranges can be sliced, but this is {shown(s.ty)}', n.line)
+        if not (s.ty == 'str' or s.ty == 'bytes' or is_list(s.ty)):
+            raise CompileError(f'only text, bytes, lists, tuples and ranges can be sliced, but this is {shown(s.ty)}', n.line)
         flags = 0
         lo = '0'
         hi = '0'
@@ -6536,6 +6616,8 @@ class Gen:
         r = self.tmp('part')
         if s.ty == 'str':
             self.emit(f'{r} = call ptr @tomato_str_slice3(ptr {s.reg}, i64 {lo}, i64 {hi}, i64 {step}, i32 {flags})')
+        elif s.ty == 'bytes':
+            self.emit(f'{r} = call ptr @tomato_bytes_slice3(ptr {s.reg}, i64 {lo}, i64 {hi}, i64 {step}, i32 {flags})')
         else:
             rc = list_flags(s.ty)
             self.emit(f'{r} = call ptr @tomato_list_slice(ptr {s.reg}, i64 {lo}, i64 {hi}, i64 {step}, i32 {flags}, i32 {rc})')
@@ -6571,6 +6653,8 @@ class Gen:
             self.release(a)
             self.release(b)
             return self.bool_of(i1)
+        if b.ty == 'bytes':
+            return self.bytes_contains(a, b, line)
         if is_set(b.ty) or is_dict(b.ty):
             a = self.want(a, set_elem(b.ty) if is_set(b.ty) else dict_key(b.ty), line, 'the left side of in')
             slot = self.dict_find(b, a, [a, b], line)
@@ -6581,13 +6665,33 @@ class Gen:
             return self.bool_of(i1)
         if is_list(b.ty):
             return self.list_contains(a, b, line)
-        raise CompileError(f"'in' does not work with {shown(b.ty)}\nit works on lists, sets, dicts and text", line)
+        raise CompileError(f"'in' does not work with {shown(b.ty)}\nit works on lists, sets, dicts, text and bytes", line)
+
+    def bytes_contains(self, a: Ex, b: Ex, line: int) -> Ex:
+        # 7 in data (a byte value, which must be from 0 to 255) or b'ab' in data (a run of bytes), as Python does (D17e)
+        if is_fixed(a.ty):
+            a = self.resize(a, 'int')
+        if a.ty != 'int' and a.ty != 'bytes':
+            raise CompileError(f"'in' with bytes needs an int (a byte) or bytes on its left, but this is {shown(a.ty)}", line)
+        c = self.tmp('c')
+        if a.ty == 'int':
+            self.emit(f'{c} = call i32 @tomato_bytes_has_byte(ptr {b.reg}, i64 {self.int_raw(a, [b])})')
+            bad = self.tmp('notbyte')
+            self.emit(f'{bad} = icmp slt i32 {c}, 0')
+            self.fail_if(bad, 'a byte must be a whole number from 0 to 255', [b])
+        else:
+            self.emit(f'{c} = call i32 @tomato_bytes_contains(ptr {b.reg}, ptr {a.reg})')
+            self.release(a)
+        i1 = self.tmp('flag')
+        self.emit(f'{i1} = icmp sgt i32 {c}, 0')
+        self.release(b)
+        return self.bool_of(i1)
 
     def list_contains(self, a: Ex, lst: Ex, line: int) -> Ex:
         # walk the items and compare each with ==, stopping at the first match (basic item types only)
         elem = elem_of(lst.ty)
-        if not (elem == 'int' or elem == 'bool' or elem == 'str'):
-            raise CompileError("'in' can search only lists of int, bool or str", line)
+        if not (elem == 'int' or elem == 'bool' or elem == 'str' or elem == 'bytes'):
+            raise CompileError("'in' can search only lists of int, bool, str or bytes", line)
         a = self.want(a, elem, line, 'the left side of in')
         found = self.hidden_slot('in.found')
         counter = self.hidden_slot('in.i')
@@ -6612,7 +6716,7 @@ class Gen:
         addr = self.list_slot(lst, ex(i, 'int'))
         item = self.load_item(lst.ty, addr, 'item')
         hit = self.tmp('hit')
-        if elem == 'str':
+        if elem == 'str' or elem == 'bytes':
             c = self.tmp('c')
             self.emit(f'{c} = call i32 @tomato_str_cmp(ptr {item}, ptr {a.reg})')
             self.emit(f'{hit} = icmp eq i32 {c}, 0')
@@ -7007,10 +7111,24 @@ class Gen:
             return self.list_equal(op, a, b, n.line)
         if (op == '==' or op == '!=') and (is_mtuple(a.ty) or is_mtuple(b.ty)):
             return self.mtuple_equal(op, a, b, n.line)
-        if (op == '+' or op == '*') and (is_list(a.ty) or is_list(b.ty) or a.ty == 'str' or b.ty == 'str'):
+        if (op == '+' or op == '*') and (is_list(a.ty) or is_list(b.ty) or a.ty == 'str' or b.ty == 'str' or a.ty == 'bytes' or b.ty == 'bytes'):
             joined = self.sequence_op(op, a, b, n.line)
             if joined.ty != '':
                 return joined
+        if a.ty == 'bytes' or b.ty == 'bytes':
+            if a.ty == 'str' or b.ty == 'str':
+                raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}\nbytes and text are different types: encode the text (s.encode()) or decode the bytes (b.decode())", n.line)
+            if a.ty != b.ty:
+                raise CompileError(f"cannot use '{op}' with {shown(a.ty)} and {shown(b.ty)}", n.line)
+            if op == '+':
+                r = self.tmp('cat')
+                self.emit(f'{r} = call ptr @tomato_str_concat(ptr {a.reg}, ptr {b.reg})')     # (the count of a bytes is its length, so the sum is right)
+                self.release(a)
+                self.release(b)
+                return ex(r, 'bytes')
+            if is_compare:
+                return self.compare_text(op, a, b)
+            raise CompileError(f"'{op}' does not work on bytes\nuse + to join bytes and * to repeat them", n.line)
         if a.ty == 'str' or b.ty == 'str':
             if a.ty != b.ty:
                 raise self.cannot_use(op, a, b, self.field_not_narrowed(left, a, right, b), n.line)
@@ -7106,7 +7224,7 @@ class Gen:
                 if not self.list_comparable(m):
                     return False
             return True
-        return t == 'str' or t == 'bool' or is_float(t) or is_numeric(t) or (is_class(t) and self.mod.has_op(t[1:], 'eq'))
+        return t == 'str' or t == 'bytes' or t == 'bool' or is_float(t) or is_numeric(t) or (is_class(t) and self.mod.has_op(t[1:], 'eq'))
 
     def invert_op(self, n: Node) -> Ex:
         # ~x on an object whose class has a method marked @invert (taking nothing besides self)
@@ -7187,6 +7305,11 @@ class Gen:
             target = val_node(f.fields[0])
             if target.kind == 'Name' and target.fields[0].text not in self.slots and self.mod.resolve(target.fields[0].text) != '' and self.mod.has_class(self.mod.resolve(target.fields[0].text)):
                 return self.qualified_call(n, f, self.mod.resolve(target.fields[0].text))
+            if target.kind == 'Name' and target.fields[0].text == 'bytes' and 'bytes' not in self.slots and self.mod.resolve('bytes') == '':
+                # bytes.fromhex(text), as Python spells it (D17e): the one function attached to the type
+                if f.fields[1].text != 'fromhex':
+                    raise CompileError(f"the type bytes has no function '{f.fields[1].text}'\nbytes.fromhex(text) is the only one; the methods (such as decode and hex) are called on a bytes value", n.line)
+                return self.helper_call('_bytes_fromhex', 'fromhex', ex('', ''), val_nodes(n.fields[1]), n.line)
             return self.method_call(n, f)
         if f.kind == 'Index' and val_node(f.fields[0]).kind == 'Name' and val_node(f.fields[0]).fields[0].text not in self.slots and self.mod.resolve(val_node(f.fields[0]).fields[0].text) in self.mod.generics:
             return self.explicit_call(self.mod.resolve(val_node(f.fields[0]).fields[0].text), n, f, val_nodes(n.fields[1]))
@@ -7299,6 +7422,10 @@ class Gen:
                 return self.call_function(self.mod.find(helper, n.line), '@tomato.' + helper, ex('', ''), args, n.line)
         if key == '' and name == 'list':
             return self.list_call(args, n.line)
+        if key == '' and name == 'bytes' and name not in self.slots:
+            if len(n.fields[2].items) > 0:
+                raise CompileError("'bytes' does not take keyword arguments", n.line)
+            return self.bytes_call(args, n.line)
         if key == '':
             raise CompileError(self.unknown_function(name), n.line)
         if key in self.mod.generics:
@@ -7568,7 +7695,7 @@ class Gen:
             return exf(r, 'int')
         if v.ty == 'bool':
             return self.int_from_machine(v.reg, True)
-        if v.ty == 'str':
+        if v.ty == 'str' or v.ty == 'bytes':
             r2 = self.tmp('hash')
             self.emit(f'{r2} = call i64 @tomato_hash_str(ptr {v.reg})')
             self.release(v)
@@ -8189,6 +8316,11 @@ class Gen:
             return self.set_method(obj, name, args, n.line)
         if is_dict(obj.ty):
             return self.dict_method(obj, name, args, n.line)
+        if obj.ty == 'bytes':
+            if name not in bytes_methods():
+                raise CompileError(self.no_method(name, 'bytes'), n.line)
+            self.kw = n.fields[2].items
+            return self.helper_call('_bytes_' + name, name, obj, args, n.line)
         if obj.ty == 'str':
             if name in text_helper_methods():
                 self.kw = n.fields[2].items
@@ -8232,7 +8364,10 @@ class Gen:
                 raise CompileError('pop() takes at most 1 argument: pop() or pop(index)', line)
             idx = ''
             if len(args) == 1:
+                held_pop = len(self.held)
+                self.hold(obj)                # freed by the error path if the index raises
                 li = self.want(self.expr(args[0]), 'int', line, 'the index given to pop()')
+                self.drop_held(held_pop)
                 idx = self.int_raw(li, [obj])
             empty = self.tmp('empty')
             self.emit(f'{empty} = icmp eq i64 {self.list_len(obj)}, 0')
@@ -8250,7 +8385,10 @@ class Gen:
         if name == 'insert':
             if len(args) != 2:
                 raise CompileError('insert() takes an index and an item: insert(index, item)', line)
+            held_ins = len(self.held)
+            self.hold(obj)                    # freed by the error path if the index raises
             li = self.want(self.expr(args[0]), 'int', line, 'the index given to insert()')
+            self.drop_held(held_ins)
             raw = self.int_raw(li, [obj])
             held_before = len(self.held)
             self.hold(obj)
@@ -8271,7 +8409,10 @@ class Gen:
         if name == 'extend':
             if len(args) != 1:
                 raise CompileError('extend() takes one list: extend(other)', line)
+            held_before = len(self.held)
+            self.hold(obj)                    # freed by the error path if the argument raises
             other = self.unwrap(self.expr(args[0], obj.ty), line)
+            self.drop_held(held_before)
             if other.ty != obj.ty:
                 raise CompileError(f'extend() needs a list of the same type, {shown(obj.ty)}, but this is {shown(other.ty)}', line)
             self.emit(f'call void @tomato_list_extend(ptr {obj.reg}, ptr {other.reg}, i32 {list_flags(obj.ty)})')
@@ -8300,7 +8441,7 @@ class Gen:
         elif is_class(elem) and self.mod.has_op(elem[1:], 'lt'):
             copy = self.call_helper(self.mod.instance_func(self.mod.resolve('_sorted_lt'), [elem], line), [obj])    # D85b
         else:
-            if not (elem == 'int' or is_float(elem) or elem == 'str'):
+            if not (elem == 'int' or is_float(elem) or elem == 'str' or elem == 'bytes'):
                 raise CompileError(f'sort() needs a list of numbers or text, or of objects of a class with a method marked @lt, but this is {shown(obj.ty)}\nuse sort(key=...) or sort(cmp=...) for other items', line)
             kind = '0' if elem == 'int' else ('3' if elem == 'float' else '2')
             r = self.tmp('sorted')
@@ -9340,7 +9481,7 @@ class Gen:
     def union_len(self, v: Ex, line: int) -> Ex:
         # len() of a union: the length of whichever member it holds (every member must have one)
         for m in union_members(v.ty):
-            if not (is_list(m) or is_dict(m) or is_set(m) or m == 'str' or (is_class(m) and self.mod.has_op(m[1:], 'len'))):
+            if not (is_list(m) or is_dict(m) or is_set(m) or m == 'str' or m == 'bytes' or (is_class(m) and self.mod.has_op(m[1:], 'len'))):
                 raise CompileError(f'len() needs every member of {shown(v.ty)} to have a length, but {shown(m)} does not', line)
         result = self.hidden_slot('len.of')
         end = self.label('endlen')
@@ -9378,6 +9519,8 @@ class Gen:
             lenp = self.tmp('lenp')
             self.emit(f'{lenp} = getelementptr {{ i64, i64, i64, i64, ptr }}, ptr {v.reg}, i32 0, i32 2')
             self.emit(f'{r} = load i64, ptr {lenp}')
+        elif v.ty == 'bytes':
+            self.emit(f'{r} = call i64 @tomato_str_len(ptr {v.reg})')       # (the count of a bytes is its length, D17e)
         else:
             v = self.want(v, 'str', line, 'the argument of len')
             self.emit(f'{r} = call i64 @tomato_str_len(ptr {v.reg})')
@@ -9591,6 +9734,11 @@ class Gen:
         if is_list(v.ty) or is_dict(v.ty) or is_set(v.ty) or is_mtuple(v.ty):
             return self.show_text(v, line)
         r = self.tmp('text')
+        if v.ty == 'bytes':
+            # b'...', the way Python shows bytes (D17e)
+            self.emit(f'{r} = call ptr @tomato_bytes_repr(ptr {v.reg})')
+            self.release(v)
+            return ex(r, 'str')
         if v.ty == 'int':
             self.emit(f'{r} = call ptr @tomato_int_str(i64 {v.reg})')
             self.release(v)
@@ -9626,7 +9774,7 @@ class Gen:
             self.drop_held(held_before)
             for later in values[k + 1:]:
                 self.hold(later)
-            if v.ty == 'None' or is_optional(v.ty):
+            if v.ty == 'None' or is_optional(v.ty) or v.ty == 'bytes':
                 shown_opt = self.text_of(v, self.line)
                 self.emit(f'call void @tomato_print_strobj(ptr {shown_opt.reg})')
                 self.emit(f'call void @tomato_release(ptr {shown_opt.reg})')
@@ -9702,7 +9850,7 @@ class Gen:
         for seen in self.mod.scope:
             if seen.module == self.mod.cur or seen.module == 'builtin':
                 out.append(seen.name)
-        out.extend(['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'clock', 'range'])
+        out.extend(['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'clock', 'range', 'bytes'])
         return out
 
     def renamed_hint(self, name: str) -> str:
@@ -10515,6 +10663,8 @@ class Gen:
             self.marker_call(lst, f, [si, sv], s.line)
             return
         if not is_list(lst.ty):
+            if lst.ty == 'bytes' or lst.ty == 'str':
+                raise CompileError(f"only list and dict items can be assigned by index\n{shown(lst.ty)} cannot be changed: make a new value, such as b[:i] + bytes([x]) + b[i + 1:]", s.line)
             raise CompileError('only list and dict items can be assigned by index', s.line)
         held_before = len(self.held)
         self.hold(lst)
@@ -11929,10 +12079,60 @@ class Gen:
         self.br(head)
         self.place(end)
 
+    def for_bytes(self, s: Node, data: Ex):
+        # for x in data: each byte as an int from 0 to 255 (D17e); the bytes cannot change, so the length is read once
+        holder = self.hidden_rc_slot('for.bytes')
+        self.store_owned(holder, data)
+        counter = self.hidden_slot('for.i')
+        self.emit(f'store i64 0, ptr {counter}')
+        var = self.slot(s.fields[0].text, 'int', s.line)
+        head = self.label('eachbyte')
+        body = self.label('eachbytebody')
+        step = self.label('eachbytestep')
+        end = self.label('endeachbyte')
+        self.br(head)
+        self.place(head)
+        t = self.tmp('data')
+        self.emit(f'{t} = load ptr, ptr {holder}')
+        i = self.tmp('i')
+        self.emit(f'{i} = load i64, ptr {counter}')
+        n = self.tmp('n')
+        self.emit(f'{n} = call i64 @tomato_str_len(ptr {t})')
+        go = self.tmp('go')
+        self.emit(f'{go} = icmp slt i64 {i}, {n}')
+        self.cond_br(go, body, end)
+        self.place(body)
+        at = self.tmp('at')
+        self.emit(f'{at} = getelementptr i8, ptr {t}, i64 32')
+        p = self.tmp('p')
+        self.emit(f'{p} = getelementptr i8, ptr {at}, i64 {i}')
+        b8 = self.tmp('b8')
+        self.emit(f'{b8} = load i8, ptr {p}')
+        b64 = self.tmp('b64')
+        self.emit(f'{b64} = zext i8 {b8} to i64')
+        self.store_owned(var, self.tag_small(b64))
+        if self.tracking():
+            self.facts = facts_copy(self.for_body)
+        self.push_loop(end, step)
+        self.block(val_nodes(s.fields[2]))
+        self.loop_depth -= 1
+        if not self.terminated:
+            self.br(step)
+        self.place(step)
+        cur = self.tmp('cur')
+        self.emit(f'{cur} = load i64, ptr {counter}')
+        nxt = self.tmp('next')
+        self.emit(f'{nxt} = add i64 {cur}, 1')
+        self.emit(f'store i64 {nxt}, ptr {counter}')
+        self.br(head)
+        self.place(end)
+
     def item_type(self, t: str) -> str:
         # the type of the items a for loop gives over a value of type t, or '' when it is not known here
         if is_list(t):
             return elem_of(t)
+        if t == 'bytes':
+            return 'int'
         if t == 'str' or t == 'File':
             return 'str'
         if is_class(t) and self.mod.has_op(t[1:], 'iter'):
@@ -12144,6 +12344,9 @@ class Gen:
             lst = ex(snap, keys)
         if lst.ty == 'str':
             self.for_text(s, lst)
+            return
+        if lst.ty == 'bytes':
+            self.for_bytes(s, lst)
             return
         if not is_list(lst.ty):
             if is_class(lst.ty):
@@ -12515,7 +12718,11 @@ def async_symbol(mod: Mod, info: FuncInfo) -> str:
 # the text methods that are written in Tomato, in std/builtin/text.tom as _str_NAME (the others are in the runtime or built in
 # to text_method)
 def text_helper_methods() -> list[str]:
-    return ['splitlines', 'partition', 'rpartition', 'rsplit', 'zfill', 'ljust', 'rjust', 'center', 'isalnum', 'removeprefix', 'removesuffix']
+    return ['splitlines', 'partition', 'rpartition', 'rsplit', 'zfill', 'ljust', 'rjust', 'center', 'isalnum', 'removeprefix', 'removesuffix', 'encode']
+
+# the methods of bytes (D17e): each is _bytes_NAME in std/builtin/bytes.tom, called like a method (keywords and messages name the method)
+def bytes_methods() -> list[str]:
+    return ['decode', 'hex', 'find', 'rfind', 'count', 'startswith', 'endswith', 'split', 'join', 'replace', 'strip', 'lstrip', 'rstrip']
 
 # the methods of a File (file_op)
 def file_methods() -> list[str]:
@@ -13248,6 +13455,11 @@ def declarations(mod: Mod) -> str:
     d += 'declare ptr @tomato_list_repeat(ptr, i64, i32)\n'
     d += 'declare ptr @tomato_str_repeat(ptr, i64)\n'
     d += 'declare ptr @tomato_str_slice3(ptr, i64, i64, i64, i32)\n'
+    d += 'declare ptr @tomato_bytes_slice3(ptr, i64, i64, i64, i32)\n'
+    d += 'declare i32 @tomato_bytes_has_byte(ptr, i64)\n'
+    d += 'declare i32 @tomato_bytes_contains(ptr, ptr)\n'
+    d += 'declare ptr @tomato_bytes_repeat(ptr, i64)\n'
+    d += 'declare ptr @tomato_bytes_repr(ptr)\n'
     d += 'declare ptr @tomato_list_slice(ptr, i64, i64, i64, i32, i32)\n'
     d += 'declare ptr @tomato_list_sorted(ptr, i32)\n'
     d += 'declare ptr @tomato_list_insert_slot(ptr, i64, i64)\n'
@@ -13863,7 +14075,7 @@ def unshowable_class(mod: Mod, t: str) -> str:
 
 def is_showable(mod: Mod, t: str) -> bool:
     # can a value of this type be shown inside a printed container (what show_item accepts)?
-    if is_numeric(t) or t == 'bool' or is_float(t) or t == 'str' or is_union(t) or is_value_optional(t):
+    if is_numeric(t) or t == 'bool' or is_float(t) or t == 'str' or t == 'bytes' or is_union(t) or is_value_optional(t):
         return True
     if is_class(t):
         return mod.has_op(t[1:], 'str')
@@ -13895,7 +14107,7 @@ def show_item(mod: Mod, et: str, e: str, line: int) -> str:
     if is_class(et):
         if not mod.has_op(et[1:], 'str'):
             raise CompileError("'" + et[1:] + "' objects cannot be printed or converted to text\nadd a method marked @str that returns text", line)
-    elif not (is_numeric(et) or et == 'bool' or is_float(et) or is_union(et) or is_value_optional(et)):
+    elif not (is_numeric(et) or et == 'bool' or et == 'bytes' or is_float(et) or is_union(et) or is_value_optional(et)):
         raise CompileError(f'a list of {shown(et)} cannot be printed\nprint its items one by one instead', line)
     if is_union(et):
         return f'_repr_box({e})'
@@ -14148,7 +14360,7 @@ def resolve_class(mod: Mod, c: ClassInfo):
 # The built-ins are the files of std/builtin/ named here, read in this order as the one module `builtin`, whose
 # names every file can use without importing them.
 def builtin_parts() -> list[str]:
-    return ['errors', 'range', 'numbers', 'text', 'sorting', 'lists', 'format']
+    return ['errors', 'range', 'numbers', 'text', 'sorting', 'lists', 'format', 'bytes']
 
 # Modules that also live in std/builtin/ but are loaded only when a program uses them, under their own names (so
 # `import bitarray` and `from bitarray import bitarray` are written as before).
@@ -14750,8 +14962,8 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
             check_reserved_llvm(mod, top.module, item.fields[0].text, item.line)
             decl = function_info(item, mod, '')
             for pt in decl.ptypes:
-                if pt == 'File' or (is_rc(pt) and pt != 'str' and pt != '@Error' and not pt.startswith('list[')):      # (an Error object only for testing's tomato_error_is)
-                    raise CompileError('an LLVM function can only take int, bool, float, text and list values, and return int, bool, float and text', item.line)
+                if pt == 'File' or (is_rc(pt) and pt != 'str' and pt != 'bytes' and pt != '@Error' and not pt.startswith('list[')):      # (an Error object only for testing's tomato_error_is)
+                    raise CompileError('an LLVM function can only take int, bool, float, text, bytes and list values, and return int, bool, float, text and bytes', item.line)
             mod.llvm_decls.append(decl)
         else:
             raise CompileError(top_level_message(item), item.line)
@@ -14817,6 +15029,8 @@ def compile_with(mod: Mod, src: str, dir: str, std: str, entry_name: str, mode: 
     for j, s in enumerate(mod.strings):
         out.append(f'{string_global(j, s)}\n')
         out.append(f'{string_c(j, s)}\n')
+    for j, d in enumerate(mod.byte_consts):
+        out.append(f'{bytes_global(j, d)}\n')
     out.append('\n')
     out.extend(bodies)
     out.append(wrapper)

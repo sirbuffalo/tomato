@@ -18,7 +18,7 @@ from lexer import lex_spans, Span
 
 # the built-in functions and the type names (the lists of the website's highlighter, site/site.js: tests/highlighter_lists.sh checks
 # that they are all here, and that the functions in the linter's list of built-in names are)
-const BUILTINS = ' print len str int float rational range open input sleep clock min max sum abs chr ord round divmod any all hash sorted reversed enumerate zip map filter list dict set tuple bool '
+const BUILTINS = ' print len str int float rational range open input sleep clock min max sum abs chr ord round divmod any all hash sorted reversed enumerate zip map filter list dict set tuple bool bytes '
 const TYPES = ' uint File Error RuntimeError IOError FileNotFoundError FileExistsError PermissionError IsADirectoryError NotADirectoryError TimeoutError ConnectionError IndexError KeyError ValueError ZeroDivisionError OverflowError EOFError CancelledError Sized bitarray frozenbitarray '
 
 # the names of the built-in functions and types, for the completion of names

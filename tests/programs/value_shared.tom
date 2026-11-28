@@ -53,14 +53,14 @@ def main():
     print(t)
     # the kinds only one format has
     print(kinds(toml.loads('a = 1979-05-27T07:32:00Z\nb = 07:32:00\nc = inf\nd = nan')))
-    print(Dict({'m': json.loads('null')}), Bin([1, 2, 3]), Ext(5, [9]), Timestamp(10, 5))
+    print(Dict({'m': json.loads('null')}), Bin(b'\x01\x02\x03'), Ext(5, b'\t'), Timestamp(10, 5))
     # a value a format cannot hold
     m = toml.loads('when = 1979-05-27')['when']
     attempt('date', m)
     attempt('inf', toml.loads('x = inf')['x'])
     attempt('null', Null())
-    attempt('bin', Bin([1]))
-    attempt('ext', Ext(3, [1]))
+    attempt('bin', Bin(b'\x01'))
+    attempt('ext', Ext(3, b'\x01'))
     attempt('timestamp', Timestamp(5))
     attempt('str', Str('ok'))
     attempt('list', List([Int(1), Float(0.5), Bool(False)]))
@@ -81,7 +81,7 @@ def main():
             catch ValueTypeError as e:
                 print(e.id, e.message)
     # equality sees kind and content
-    print(Int(1) == Int(1), Int(1) == Float(1.0), Str('a') == Str('a'), Null() == Null(), Bin([1]) == Bin([1]), Bin([1]) == Ext(0, [1]), Dict({'a': Int(1), 'b': Int(2)}) == Dict({'b': Int(2), 'a': Int(1)}))
+    print(Int(1) == Int(1), Int(1) == Float(1.0), Str('a') == Str('a'), Null() == Null(), Bin(b'\x01') == Bin(b'\x01'), Bin(b'\x01') == Ext(0, b'\x01'), Dict({'a': Int(1), 'b': Int(2)}) == Dict({'b': Int(2), 'a': Int(1)}))
     # a Dict keeps the order its keys were added in, and as_dict() is the dict itself
     d = Dict({})
     d.as_dict()['z'] = Int(1)

@@ -1,0 +1,5 @@
+# bytes cannot be changed in place (D17e): the error says how to make a new value
+@main
+def main():
+    b = b'abc'
+    b[0] = 120

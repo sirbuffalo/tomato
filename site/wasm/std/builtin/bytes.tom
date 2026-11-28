@@ -1,0 +1,212 @@
+# The methods of bytes and the work of bytes(...), bytes.fromhex(...), list(b) and s.encode() (D17e). Part of the built-ins
+# (std/builtin/). The compiler turns `b.decode()` into _bytes_decode(b) and `s.encode()` into _str_encode(s), and keeps the names
+# and the defaults of the parameters below for the messages and for keywords. The bytes themselves are handled by the runtime
+# (tomato_bytes_* in runtime/tomato_rt.c); len, indexing, slicing, +, *, comparison, `in` and `for` are compiled directly.
+
+!tomato_bytes_search(b: bytes, sub: bytes, start: int, end: int, mode: int) -> int
+!tomato_bytes_starts(b: bytes, part: bytes, at_end: int) -> int
+!tomato_bytes_join(sep: bytes, items: list[bytes]) -> bytes
+!tomato_bytes_hex(b: bytes) -> str
+!tomato_bytes_hex_problem(text: str) -> int
+!tomato_bytes_fromhex(text: str) -> bytes
+!tomato_bytes_zeros(n: int) -> bytes
+!tomato_bytes_list_problem(items: list[int]) -> int
+!tomato_bytes_of_list(items: list[int]) -> bytes
+!tomato_bytes_into_list(b: bytes, out: list[int])
+!tomato_bytes_decode_problem(b: bytes, ascii: int) -> int
+!tomato_bytes_decode(b: bytes, ascii: int, replace: int) -> str
+!tomato_str_encode(text: str) -> bytes
+!tomato_str_nbytes(s: str) -> int
+
+# the encodings that decode() and encode() know: 0 for UTF-8, 1 for ASCII (spelled as Python accepts them: any case, - or _)
+def _codec(encoding: str) -> int:
+    e = encoding.lower().replace('_', '-')
+    if e == 'utf-8' or e == 'utf8':
+        return 0
+    if e == 'ascii' or e == 'us-ascii':
+        return 1
+    raise ValueError(f"unknown encoding '{encoding}'\nTomato knows 'utf-8' and 'ascii'", 'E625')
+
+def _errors_mode(errors: str) -> int:
+    if errors == 'strict':
+        return 0
+    if errors == 'replace':
+        return 1
+    raise ValueError(f"unknown error mode '{errors}'\nuse 'strict' (bad bytes are a ValueError) or 'replace' (put U+FFFD in place of the bad bytes)", 'E626')
+
+def _hex2(b: int) -> str:
+    return '0123456789abcdef'[b // 16] + '0123456789abcdef'[b % 16]
+
+# b.decode(encoding='utf-8', errors='strict'): the text of the bytes
+def _bytes_decode(b: bytes, encoding: str = 'utf-8', errors: str = 'strict') -> str:
+    ascii = _codec(encoding)
+    replace = _errors_mode(errors)
+    if replace == 0:
+        at = !tomato_bytes_decode_problem(b, ascii)
+        if at >= 0:
+            if ascii == 1:
+                raise ValueError(f'invalid ASCII: the byte 0x{_hex2(b[at])} at position {at} is above 127', 'E627')
+            raise ValueError(f"invalid UTF-8: the byte 0x{_hex2(b[at])} at position {at} {_utf8_problem(b, at)}\ndecode with errors='replace' to put U+FFFD in its place", 'E498')
+    return !tomato_bytes_decode(b, ascii, replace)
+
+# why the UTF-8 sequence that starts at b[at] is not valid, in the words of Python's three reasons: a byte that cannot start a
+# character, one whose next bytes are not the continuation it needs, or the end of the bytes in the middle of a character
+def _utf8_problem(b: bytes, at: int) -> str:
+    lead = b[at]
+    need = 0
+    if lead >= 194 and lead <= 223:
+        need = 2
+    elif lead >= 224 and lead <= 239:
+        need = 3
+    elif lead >= 240 and lead <= 244:
+        need = 4
+    if need == 0:
+        return 'cannot start a character'
+    k = 1
+    while k < need and at + k < len(b):
+        c = b[at + k]
+        low = 128
+        high = 191
+        if k == 1 and lead == 224:
+            low = 160
+        elif k == 1 and lead == 237:
+            high = 159
+        elif k == 1 and lead == 240:
+            low = 144
+        elif k == 1 and lead == 244:
+            high = 143
+        if c < low or c > high:
+            return 'starts a character that the next byte does not continue'
+        k += 1
+    return 'starts a character, but the bytes end before it does'
+
+# s.encode(encoding='utf-8', errors='strict'): the bytes of a text
+def _str_encode(s: str, encoding: str = 'utf-8', errors: str = 'strict') -> bytes:
+    ascii = _codec(encoding)
+    replace = _errors_mode(errors)
+    if ascii == 0:
+        return !tomato_str_encode(s)
+    if !tomato_str_nbytes(s) == len(s):
+        return !tomato_str_encode(s)
+    if replace == 0:
+        for i, c in enumerate(s):
+            if ord(c) > 127:
+                raise ValueError(f"the text is not ASCII: '{c}' at position {i}\nencode it as 'utf-8', or with errors='replace' to put ? in its place", 'E628')
+    out: list[int] = []
+    for c in s:
+        out.append(ord(c) if ord(c) < 128 else 63)
+    return !tomato_bytes_of_list(out)
+
+# b.hex(sep=''): two lower-case hex digits for each byte, with sep between the bytes when it is given
+def _bytes_hex(b: bytes, sep: str = '') -> str:
+    if len(sep) > 1:
+        raise ValueError(f"the separator of hex() must be one character, but it is '{sep}'", 'E643')
+    if sep == '' or len(b) < 2:
+        return !tomato_bytes_hex(b)
+    parts: list[str] = []
+    for x in b:
+        parts.append(_hex2(x))
+    return sep.join(parts)
+
+# bytes.fromhex(text): two hex digits (either case) for each byte; ASCII whitespace may stand between the pairs
+def _bytes_fromhex(text: str) -> bytes:
+    at = !tomato_bytes_hex_problem(text)
+    if at >= 0:
+        if at >= len(text) or text[at] in ' \t\n\r':
+            raise ValueError(f'a hex text needs two digits for each byte, but the digit at position {at - 1} has no partner', 'E394')
+        raise ValueError(f"a hex text holds only the digits 0-9 and a-f (and spaces between the pairs), but position {at} is '{text[at]}'", 'E395')
+    return !tomato_bytes_fromhex(text)
+
+# bytes(n)
+def _bytes_zeros(n: int) -> bytes:
+    if n < 0:
+        raise ValueError(f'bytes() needs a count that is not negative, but got {n}', 'E624')
+    return !tomato_bytes_zeros(n)
+
+# bytes(items): each item must be from 0 to 255
+def _bytes_of_list(items: list[int]) -> bytes:
+    at = !tomato_bytes_list_problem(items)
+    if at >= 0:
+        raise ValueError(f'a byte must be a whole number from 0 to 255, but item {at} is {items[at]}', 'E391')
+    return !tomato_bytes_of_list(items)
+
+# list(b), and what sum(b), min(b), max(b) and sorted(b) work on
+def _bytes_list(b: bytes) -> list[int]:
+    out: list[int] = []
+    !tomato_bytes_into_list(b, out)
+    return out
+
+# find(sub, start=0, end=...), rfind and count, with Python's rules for the ends (a negative one counts from the end)
+def _bytes_find(b: bytes, sub: bytes, start: int = 0, end: int = 4611686018427387903) -> int:
+    return !tomato_bytes_search(b, sub, start, end, 0)
+
+def _bytes_rfind(b: bytes, sub: bytes, start: int = 0, end: int = 4611686018427387903) -> int:
+    return !tomato_bytes_search(b, sub, start, end, 1)
+
+def _bytes_count(b: bytes, sub: bytes, start: int = 0, end: int = 4611686018427387903) -> int:
+    return !tomato_bytes_search(b, sub, start, end, 2)
+
+def _bytes_startswith(b: bytes, prefix: bytes) -> bool:
+    return !tomato_bytes_starts(b, prefix, 0) != 0
+
+def _bytes_endswith(b: bytes, suffix: bytes) -> bool:
+    return !tomato_bytes_starts(b, suffix, 1) != 0
+
+# b.split(sep): the pieces between the separators (sep is not empty); maxsplit=-1 is no limit
+def _bytes_split(b: bytes, sep: bytes, maxsplit: int = -1) -> list[bytes]:
+    if len(sep) == 0:
+        raise ValueError('an empty separator cannot be used to split bytes', 'E629')
+    out: list[bytes] = []
+    at = 0
+    while maxsplit < 0 or len(out) < maxsplit:
+        hit = !tomato_bytes_search(b, sep, at, len(b), 0)
+        if hit < 0:
+            break
+        out.append(b[at:hit])
+        at = hit + len(sep)
+    out.append(b[at:])
+    return out
+
+# sep.join(items)
+def _bytes_join(sep: bytes, items: list[bytes]) -> bytes:
+    return !tomato_bytes_join(sep, items)
+
+# b.replace(old, new, count=-1): every (or the first count) non-overlapping old replaced by new; an empty old puts new between
+# every byte and at both ends, as Python does
+def _bytes_replace(b: bytes, old: bytes, new: bytes, count: int = -1) -> bytes:
+    parts: list[bytes] = []
+    if len(old) == 0:
+        done = 0
+        for i in range(len(b) + 1):
+            if count < 0 or done < count:
+                parts.append(new)
+                done += 1
+            if i < len(b):
+                parts.append(b[i:i + 1])
+        return !tomato_bytes_join(b'', parts)
+    at = 0
+    while count < 0 or len(parts) < count:
+        hit = !tomato_bytes_search(b, old, at, len(b), 0)
+        if hit < 0:
+            break
+        parts.append(b[at:hit])
+        at = hit + len(old)
+    parts.append(b[at:])
+    return !tomato_bytes_join(new, parts)
+
+# strip(chars), lstrip(chars) and rstrip(chars): take off the bytes that are in chars from the start, the end or both; by default
+# ASCII whitespace (space, tab, newline, carriage return, vertical tab, form feed), as Python's bytes.strip()
+def _bytes_lstrip(b: bytes, chars: bytes = b' \t\n\r\x0b\x0c') -> bytes:
+    i = 0
+    while i < len(b) and b[i] in chars:
+        i += 1
+    return b[i:]
+
+def _bytes_rstrip(b: bytes, chars: bytes = b' \t\n\r\x0b\x0c') -> bytes:
+    n = len(b)
+    while n > 0 and b[n - 1] in chars:
+        n -= 1
+    return b[:n]
+
+def _bytes_strip(b: bytes, chars: bytes = b' \t\n\r\x0b\x0c') -> bytes:
+    return _bytes_rstrip(_bytes_lstrip(b, chars), chars)

@@ -1,4 +1,10 @@
-# Incremental SHA-256, SHA-224, SHA-1 and MD5. SHA-1 and MD5 are not collision resistant.
+# Incremental SHA-256, SHA-224, SHA-1 and MD5. SHA-1 and MD5 are not collision resistant. Data and digests are `bytes`:
+#
+#     h = hashlib.sha256(b'hello')
+#     h.update(b' world')
+#     print(h.hexdigest())                       # the digest as hex text
+#     print(hashlib.sha1_hex(b'abc'))
+#     print(hashlib.pbkdf2_hmac('sha256', b'password', b'salt', 1000))
 import utf8
 
 def _rotr(x: int, n: int) -> int:
@@ -7,24 +13,17 @@ def _rotr(x: int, n: int) -> int:
 def _rotl(x: int, n: int) -> int:
     return ((x << n) | (x >> (32 - n))) & 4294967295
 
-def _hex(data: list[int]) -> str:
-    digits = '0123456789abcdef'
-    out: list[str] = []
-    for b in data:
-        out.append(digits[b // 16] + digits[b % 16])
-    return ''.join(out)
-
 export class Hash:
     name: str = ''
     digest_size: int = 0
     block_size: int = 64
     state: list[int] = []
-    buffer: list[int] = []
+    buffer: bytes = b''
     length: int = 0
     @init
     def make(self, name: str):
         self.name = name
-        self.buffer = []
+        self.buffer = b''
         self.length = 0
         if name == 'sha256':
             self.digest_size = 32
@@ -44,16 +43,13 @@ export class Hash:
     def copy(self) -> Hash:
         other = Hash(self.name)
         other.state = self.state[:]
-        other.buffer = self.buffer[:]
+        other.buffer = self.buffer
         other.length = self.length
         return other
 
-    def update(self, data: list[int]):
-        for b in data:
-            if b < 0 or b > 255:
-                raise ValueError('a byte must be from 0 to 255', 'E391')
+    def update(self, data: bytes):
         self.length += len(data)
-        self.buffer += data
+        self.buffer = self.buffer + data
         pos = 0
         while pos + 64 <= len(self.buffer):
             self._block(self.buffer[pos:pos+64])
@@ -63,7 +59,7 @@ export class Hash:
     def update_text(self, text: str):
         self.update(utf8.encode(text))
 
-    def digest(self) -> list[int]:
+    def digest(self) -> bytes:
         h = self.copy()
         bits = (self.length * 8) % 18446744073709551616
         pad: list[int] = [128]
@@ -74,7 +70,7 @@ export class Hash:
             if self.name == 'md5':
                 shift = 8 * i
             pad.append((bits // (2 ** shift)) % 256)
-        h.update(pad)
+        h.update(bytes(pad))
         out: list[int] = []
         for word in h.state:
             for i in range(4):
@@ -82,12 +78,12 @@ export class Hash:
                 if self.name == 'md5':
                     shift = 8 * i
                 out.append((word >> shift) & 255)
-        return out[:self.digest_size]
+        return bytes(out[:self.digest_size])
 
     def hexdigest(self) -> str:
-        return _hex(self.digest())
+        return self.digest().hex()
 
-    def _block(self, block: list[int]):
+    def _block(self, block: bytes):
         if self.name == 'sha1':
             self._sha1(block)
         elif self.name == 'md5':
@@ -95,7 +91,7 @@ export class Hash:
         else:
             self._sha256(block)
 
-    def _sha1(self, block: list[int]):
+    def _sha1(self, block: bytes):
         w: list[int] = []
         for i in range(16):
             j = 4 * i
@@ -128,7 +124,7 @@ export class Hash:
             a = t
         self.state = [(self.state[0] + a) & 4294967295, (self.state[1] + b) & 4294967295, (self.state[2] + c) & 4294967295, (self.state[3] + d) & 4294967295, (self.state[4] + e) & 4294967295]
 
-    def _sha256(self, block: list[int]):
+    def _sha256(self, block: bytes):
         k: list[int] = [1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221, 3624381080, 310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580, 3835390401, 4022224774, 264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986, 2554220882, 2821834349, 2952996808, 3210313671, 3336571891, 3584528711, 113926993, 338241895, 666307205, 773529912, 1294757372, 1396182291, 1695183700, 1986661051, 2177026350, 2456956037, 2730485921, 2820302411, 3259730800, 3345764771, 3516065817, 3600352804, 4094571909, 275423344, 430227734, 506948616, 659060556, 883997877, 958139571, 1322822218, 1537002063, 1747873779, 1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479, 3329325298]
         w: list[int] = []
         for i in range(16):
@@ -167,7 +163,7 @@ export class Hash:
         for i in range(8):
             self.state[i] = (self.state[i] + vals[i]) & 4294967295
 
-    def _md5(self, block: list[int]):
+    def _md5(self, block: bytes):
         k: list[int] = [3614090360, 3905402710, 606105819, 3250441966, 4118548399, 1200080426, 2821735955, 4249261313, 1770035416, 2336552879, 4294925233, 2304563134, 1804603682, 4254626195, 2792965006, 1236535329, 4129170786, 3225465664, 643717713, 3921069994, 3593408605, 38016083, 3634488961, 3889429448, 568446438, 3275163606, 4107603335, 1163531501, 2850285829, 4243563512, 1735328473, 2368359562, 4294588738, 2272392833, 1839030562, 4259657740, 2763975236, 1272893353, 4139469664, 3200236656, 681279174, 3936430074, 3572445317, 76029189, 3654602809, 3873151461, 530742520, 3299628645, 4096336452, 1126891415, 2878612391, 4237533241, 1700485571, 2399980690, 4293915773, 2240044497, 1873313359, 4264355552, 2734768916, 1309151649, 4149444226, 3174756917, 718787259, 3951481745]
         shifts = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21]
         w: list[int] = []
@@ -200,56 +196,52 @@ export class Hash:
         for i in range(4):
             self.state[i] = (self.state[i] + vals[i]) & 4294967295
 
-export def new(name: str, data: list[int] = []) -> Hash:
+export def new(name: str, data: bytes = b'') -> Hash:
     h = Hash(name)
     h.update(data)
     return h
 
-export def sha256(data: list[int] = []) -> Hash:
+export def sha256(data: bytes = b'') -> Hash:
     return new('sha256', data)
 
-export def sha224(data: list[int] = []) -> Hash:
+export def sha224(data: bytes = b'') -> Hash:
     return new('sha224', data)
 
-export def sha1(data: list[int] = []) -> Hash:
+export def sha1(data: bytes = b'') -> Hash:
     return new('sha1', data)
 
-export def md5(data: list[int] = []) -> Hash:
+export def md5(data: bytes = b'') -> Hash:
     return new('md5', data)
 
-export def sha256_hex(data: list[int]) -> str:
+export def sha256_hex(data: bytes) -> str:
     return sha256(data).hexdigest()
 
-export def sha1_hex(data: list[int]) -> str:
+export def sha1_hex(data: bytes) -> str:
     return sha1(data).hexdigest()
 
-export def md5_hex(data: list[int]) -> str:
+export def md5_hex(data: bytes) -> str:
     return md5(data).hexdigest()
 
 # PBKDF2-HMAC, RFC 8018. A zero dklen selects the digest size.
-export def pbkdf2_hmac(hash_name: str, password: list[int], salt: list[int], iterations: int, dklen: int = 0) -> list[int]:
+export def pbkdf2_hmac(hash_name: str, password: bytes, salt: bytes, iterations: int, dklen: int = 0) -> bytes:
     probe = new(hash_name)
     if iterations < 1 or dklen < 0:
         raise ValueError('invalid PBKDF2 iteration count or length', 'E502')
-    for b in password + salt:
-        if b < 0 or b > 255:
-            raise ValueError('a byte must be from 0 to 255', 'E391')
     if dklen == 0:
         dklen = probe.digest_size
     if dklen > probe.digest_size * 4294967295:
         raise OverflowError('derived key is too long', 'E500')
-    key = password[:]
+    key = password
     if len(key) > 64:
         key = new(hash_name, key).digest()
-    while len(key) < 64:
-        key.append(0)
+    key = key + bytes(64 - len(key))
     ipad: list[int] = []
     opad: list[int] = []
     for b in key:
         ipad.append(b ^ 54)
         opad.append(b ^ 92)
-    inner = new(hash_name, ipad)
-    outer = new(hash_name, opad)
+    inner = new(hash_name, bytes(ipad))
+    outer = new(hash_name, bytes(opad))
     out: list[int] = []
     block = 1
     while len(out) < dklen:
@@ -259,11 +251,11 @@ export def pbkdf2_hmac(hash_name: str, password: list[int], salt: list[int], ite
             suffix[i] = n % 256
             n = n // 256
         h = inner.copy()
-        h.update(salt + suffix)
+        h.update(salt + bytes(suffix))
         o = outer.copy()
         o.update(h.digest())
         u = o.digest()
-        result = u[:]
+        result = list(u)
         for i in range(1, iterations):
             h = inner.copy()
             h.update(u)
@@ -274,4 +266,4 @@ export def pbkdf2_hmac(hash_name: str, password: list[int], salt: list[int], ite
                 result[j] = result[j] ^ u[j]
         out.extend(result)
         block += 1
-    return out[:dklen]
+    return bytes(out[:dklen])

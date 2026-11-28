@@ -41,18 +41,18 @@ the integer 10000000000000000000000000000000000000000 does not fit in 64 bits
 the ext type -1 must be from -128 to 127 and not -1
 the ext type 128 must be from -128 to 127 and not -1
 the ext type -129 must be from -128 to 127 and not -1
-a byte must be an int from 0 to 255
-a byte must be an int from 0 to 255
 timestamp nanoseconds must be from 0 to 999999999
 timestamp nanoseconds must be from 0 to 999999999
 the timestamp seconds are out of range
 512
 nesting is deeper than 512 levels
 nesting is deeper than 512 levels
--- bytes that are not bytes
-A byte must be an int from 0 to 255: byte 2 2
-A byte must be an int from 0 to 255: byte 0 0
-A byte must be an int from 0 to 255: byte 0 0
+-- bytes that are not bytes: bytes() refuses them before MessagePack is involved
+E391 a byte must be a whole number from 0 to 255, but item 2 is 300
+E391 a byte must be a whole number from 0 to 255, but item 0 is -1
+E391 a byte must be a whole number from 0 to 255, but item 0 is 1000000000000000000000000000000
+E391 a byte must be a whole number from 0 to 255, but item 1 is 256
+E391 a byte must be a whole number from 0 to 255, but item 1 is -1
 -- JSON text cannot hold these
 a bin value cannot be written as JSON text (use dumps_msgpack)
 an ext value cannot be written as JSON text (use dumps_msgpack)

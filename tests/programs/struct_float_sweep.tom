@@ -1,6 +1,6 @@
 import struct
 
-def pack_f64(x: float, order: str) -> list[int]:
+def pack_f64(x: float, order: str) -> bytes:
     p = struct.Packer(order)
     p.f64(x)
     return p.bytes()
@@ -25,13 +25,13 @@ def main():
         if i % 3 == 2:
             raw[1] = raw[1] % 16
             raw[2] = 0
-        rd = struct.Reader(raw)
+        rd = struct.Reader(bytes(raw))
         try:
             x = rd.read_f64()
         catch ValueError:
             skipped += 1
             continue
-        if pack_f64(x, '>') == raw:
+        if pack_f64(x, '>') == bytes(raw):
             same64 += 1
         narrow = struct.Packer('<')
         try:

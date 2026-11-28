@@ -497,7 +497,9 @@ in `runtime/tomato_rt.c`).
 
 ## 8. Text and bytes
 
-### 8.1 There is no `bytes` type: binary data is `list[int]` (Blocks 1.0)
+### 8.1 There is no `bytes` type: binary data is `list[int]` (Blocks 1.0) — decided and built (D17e, 2026-11-27)
+
+**Decided.** Davis chose on 2026-11-27 that 1.0 gets a real immutable `bytes` and that the binary std APIs move to it before the compatibility promise starts, one way only (no old `list[int]` signatures beside the new ones). Built as D17e: literals `b'...'` with `\xHH` (ASCII only), `b[i]` an `int`, slices, `+`, `*`, comparison, `in`, `for`, hashing, `print` as `b'...'`, `bytes(n)`, `bytes(list)`, `bytes.fromhex`, `list(b)`, `decode`, `hex`, `find`, `split`, `join`, `replace`, `strip` and `str.encode`; base64, hex, utf8, hashlib, hmac, zlib, struct, uuid, secrets, `os.read_bytes`/`write_bytes`, socket, MessagePack, `requests` and `terminal.KeyDecoder.feed` take and give `bytes` (the base64 and hex encoders return text). `bytearray` is left for later (it only adds). The text below is the audit's original problem and proposal.
 
 **Problem.** Every binary API takes or returns `list[int]`:
 
@@ -619,7 +621,7 @@ In the order I would take them, with my recommendation for each. The first eight
 3. **Builtins versus user names (1.4).** A module's own definitions shadow builtins. *Decided by Davis on 2026-11-27 and built (D108a).*
 4. **The `@` namespace and the type test (2.1, 2.2).** Entry points other than `main` as `@entry`; type tests as
    `x is T` (2.2 decided and built, D23i).
-5. **`bytes` (8.1).** A `bytes` type before 1.0, or at least `list[uint[length=8]]` in every binary std signature.
+5. **`bytes` (8.1).** A `bytes` type before 1.0, or at least `list[uint[length=8]]` in every binary std signature (decided and built: D17e).
 6. **`File` safety (5.1).** A closed flag, an idempotent `close()`, close on the last reference (built as a default, D93a, for Davis to confirm or change); `with` soon after.
 7. **Module names (9.1).** Reserve std's future names, warn when a project file shadows std, add `import ... as`. *Decided by Davis on 2026-11-27 and built (D115a).*
 8. **The `!` C interface (1.6).** Decided and built (D112a): open for any symbol except `tomato_*`, which only `std/` may use.

@@ -1,54 +1,20 @@
-# UTF-8 conversion between text and list[int] bytes.
+# UTF-8 conversion between text and bytes (`import utf8`):
+#
+#     print(utf8.encode('hé'))                  # b'h\xc3\xa9'
+#     print(utf8.decode(b'h\xc3\xa9'))          # hé
+#
+# encode(text) -> bytes is `text.encode()`, but it also keeps invalid bytes that are already in the text.
+# decode(data: bytes, errors='strict') -> str is `data.decode(errors=errors)`: errors is 'strict' or 'replace'.
 !tomato_str_nbytes(s: str) -> int
 !tomato_str_byte(s: str, i: int) -> int
 
-export def encode(text: str) -> list[int]:
+export def encode(text: str) -> bytes:
     out: list[int] = []
     for i in range(!tomato_str_nbytes(text)):
         out.append(!tomato_str_byte(text, i))
-    return out
+    return bytes(out)
 
-export def decode(data: list[int], errors: str = 'strict') -> str:
+export def decode(data: bytes, errors: str = 'strict') -> str:
     if errors != 'strict' and errors != 'replace':
         raise ValueError('unknown UTF-8 error mode', 'E497')
-    for b in data:
-        if b < 0 or b > 255:
-            raise ValueError('a byte must be from 0 to 255', 'E391')
-    parts: list[str] = []
-    i = 0
-    while i < len(data):
-        b = data[i]
-        if b < 128:
-            parts.append(chr(b))
-            i += 1
-            continue
-        count = 0
-        cp = 0
-        if b >= 194 and b <= 223:
-            count = 2
-            cp = b & 31
-        elif b >= 224 and b <= 239:
-            count = 3
-            cp = b & 15
-        elif b >= 240 and b <= 244:
-            count = 4
-            cp = b & 7
-        used = 1
-        if count > 0:
-            while used < count and i + used < len(data):
-                c = data[i + used]
-                if c < 128 or c > 191:
-                    break
-                if used == 1 and ((b == 224 and c < 160) or (b == 237 and c > 159) or (b == 240 and c < 144) or (b == 244 and c > 143)):
-                    break
-                cp = (cp << 6) | (c & 63)
-                used += 1
-        if count > 0 and used == count:
-            parts.append(chr(cp))
-            i += count
-        else:
-            if errors == 'strict':
-                raise ValueError('invalid UTF-8', 'E498')
-            parts.append(chr(65533))
-            i += used
-    return ''.join(parts)
+    return data.decode(errors=errors)

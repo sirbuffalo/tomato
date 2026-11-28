@@ -20,15 +20,15 @@ def shown(keys: list[Key]) -> str:
 # all the bytes at once, then the wait is over (flush)
 def whole(data: list[int]) -> str:
     d = KeyDecoder()
-    keys = d.feed(data)
+    keys = d.feed(bytes(data))
     keys.extend(d.flush())
     return shown(keys)
 
 # the bytes in two pieces, split at `at`
 def two(data: list[int], at: int) -> str:
     d = KeyDecoder()
-    keys = d.feed(data[:at])
-    keys.extend(d.feed(data[at:]))
+    keys = d.feed(bytes(data[:at]))
+    keys.extend(d.feed(bytes(data[at:])))
     keys.extend(d.flush())
     return shown(keys)
 
@@ -37,7 +37,7 @@ def single(data: list[int]) -> str:
     d = KeyDecoder()
     keys: list[Key] = []
     for b in data:
-        keys.extend(d.feed([b]))
+        keys.extend(d.feed(bytes([b])))
     keys.extend(d.flush())
     return shown(keys)
 
@@ -166,25 +166,25 @@ def alt_and_the_lone_escape():
 def what_waits_for_more():
     d = KeyDecoder()
     assert_false(d.pending())
-    assert_equal(shown(d.feed([27])), '')
+    assert_equal(shown(d.feed(bytes([27]))), '')
     assert_true(d.pending())
-    assert_equal(shown(d.feed([91])), '')
+    assert_equal(shown(d.feed(bytes([91]))), '')
     assert_true(d.pending())
-    assert_equal(shown(d.feed([49, 59])), '')
+    assert_equal(shown(d.feed(bytes([49, 59]))), '')
     assert_true(d.pending())
-    assert_equal(shown(d.feed([53, 67])), 'key right ctrl')
+    assert_equal(shown(d.feed(bytes([53, 67]))), 'key right ctrl')
     assert_false(d.pending())
-    assert_equal(shown(d.feed([226, 130])), '')
+    assert_equal(shown(d.feed(bytes([226, 130]))), '')
     assert_true(d.pending())
-    assert_equal(shown(d.feed([172])), "char '€'")
+    assert_equal(shown(d.feed(bytes([172]))), "char '€'")
     assert_false(d.pending())
-    assert_equal(shown(d.feed([27])), '')
+    assert_equal(shown(d.feed(bytes([27]))), '')
     assert_true(d.pending())
     assert_equal(shown(d.flush()), 'key escape')
     assert_false(d.pending())
     assert_equal(shown(d.flush()), '')
     # a half character that never completes is dropped by flush
-    assert_equal(shown(d.feed([226, 130])), '')
+    assert_equal(shown(d.feed(bytes([226, 130]))), '')
     assert_equal(shown(d.flush()), '')
     assert_false(d.pending())
 
@@ -220,28 +220,28 @@ def bracketed_paste():
     keys_are(start + [226, 130, 172, 255, 97] + end, "paste '€a'")
     # the text is kept as it is, escape sequences inside it included, and the keys after it are keys again
     d = KeyDecoder()
-    keys = d.feed(start + [27, 91, 65, 27, 91, 50, 48, 48, 126] + end + [27, 91, 65])
+    keys = d.feed(bytes(start + [27, 91, 65, 27, 91, 50, 48, 48, 126] + end + [27, 91, 65]))
     assert_equal(len(keys), 2)
     assert_equal(keys[0].kind, 'paste')
     assert_equal(keys[0].text, esc('[A') + esc('[200~'))
     assert_equal(str(keys[1]), 'key up')
     # while a paste is open there is nothing to wait for, and flush does not end it
     e = KeyDecoder()
-    assert_equal(shown(e.feed(start + [97])), '')
+    assert_equal(shown(e.feed(bytes(start + [97]))), '')
     assert_false(e.pending())
     assert_equal(shown(e.flush()), '')
-    assert_equal(shown(e.feed([27, 91, 50, 48, 49])), '')
+    assert_equal(shown(e.feed(bytes([27, 91, 50, 48, 49]))), '')
     assert_false(e.pending())
-    assert_equal(shown(e.feed([126])), "paste 'a'")
+    assert_equal(shown(e.feed(bytes([126]))), "paste 'a'")
     # a paste that never ends: abort_paste gives the text so far, and later bytes are keys again
     f = KeyDecoder()
     assert_false(f.in_paste())
     assert_equal(shown(f.abort_paste()), '')
-    assert_equal(shown(f.feed(start + [97, 13, 98])), '')
+    assert_equal(shown(f.feed(bytes(start + [97, 13, 98]))), '')
     assert_true(f.in_paste())
     assert_equal(shown(f.abort_paste()), "paste 'a\\nb'")
     assert_false(f.in_paste())
-    assert_equal(shown(f.feed([120])), "char 'x'")
+    assert_equal(shown(f.feed(bytes([120]))), "char 'x'")
     # an end marker outside a paste is nothing
     keys_are(end + [97], "char 'a'")
 
@@ -265,7 +265,7 @@ def a_long_paste_in_small_pieces():
     keys: list[Key] = []
     at = 0
     while at < len(data):
-        keys.extend(d.feed(data[at:at + 7]))
+        keys.extend(d.feed(bytes(data[at:at + 7])))
         at += 7
     assert_equal(len(keys), 1)
     assert_equal(keys[0].kind, 'paste')
@@ -275,7 +275,7 @@ def a_long_paste_in_small_pieces():
 @test.key_fields_and_text
 def key_fields_and_text():
     d = KeyDecoder()
-    keys = d.feed([27, 91, 49, 59, 53, 67, 1, 97])
+    keys = d.feed(bytes([27, 91, 49, 59, 53, 67, 1, 97]))
     assert_equal(keys[0].kind, 'key')
     assert_equal(keys[0].name, 'right')
     assert_true(keys[0].ctrl)

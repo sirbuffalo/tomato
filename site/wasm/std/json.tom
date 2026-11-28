@@ -28,16 +28,16 @@
 !tomato_json_scan(text: str, tape: list[int], strs: list[str], nums: list[float]) -> int
 !tomato_json_quote(text: str, ascii: int) -> str
 !tomato_bf_is_boxed(x: float) -> int[length=32]
-!tomato_msgpack_scan(data: list[int], tape: list[int], strs: list[str], nums: list[float]) -> int
+!tomato_msgpack_scan(data: bytes, tape: list[int], strs: list[str], nums: list[float]) -> int
 !tomato_mp_head(out: list[int], kind: int, n: int)
 !tomato_mp_str(out: list[int], text: str)
 !tomato_mp_f64(out: list[int], x: float)
 !tomato_mp_i64(out: list[int], v: int)
 !tomato_mp_u64(out: list[int], hi: int, lo: int)
-!tomato_mp_blob(out: list[int], code: int, isext: int, data: list[int]) -> int
+!tomato_mp_blob(out: list[int], code: int, isext: int, data: bytes) -> int
 !tomato_mp_ts(out: list[int], secs: int, nanos: int)
-!tomato_file_read_bytes(path: str, out: list[int]) -> int
-!tomato_file_write_bytes(path: str, data: list[int]) -> int
+!tomato_file_read_bytes(path: str, out: list[bytes]) -> int
+!tomato_file_write_bytes(path: str, data: bytes) -> int
 !tomato_file_error(path: str, code: int) -> str
 
 from value import Value, Null, Bool, Int, Float, Str, List, Dict, Bin, Ext, Timestamp
@@ -217,14 +217,12 @@ def _pack(v: Value, out: list[int], depth: int):
             !tomato_mp_str(out, key)
             _pack(fields[key], out, depth + 1)
     elif k == 'bin':
-        if !tomato_mp_blob(out, 0, 0, v.as_bytes()) != 0:
-            raise MsgpackError('a byte must be an int from 0 to 255', -1, 'E83')
+        !tomato_mp_blob(out, 0, 0, v.as_bytes())
     elif k == 'ext':
         code = v.ext_type()
         if code < -128 or code > 127 or code == -1:
             raise MsgpackError(f'the ext type {code} must be from -128 to 127 and not -1', -1, 'E87')
-        if !tomato_mp_blob(out, code, 1, v.as_bytes()) != 0:
-            raise MsgpackError('a byte must be an int from 0 to 255', -1, 'E83')
+        !tomato_mp_blob(out, code, 1, v.as_bytes())
     elif k == 'timestamp':
         secs = v.seconds()
         ns = v.nanos()
@@ -278,12 +276,12 @@ class Builder:
         if k == 11:
             size = self.tape[self.t]
             self.t += 1 + size
-            return Bin(self.tape[self.t - size:self.t])
+            return Bin(bytes(self.tape[self.t - size:self.t]))
         if k == 12:
             code = self.tape[self.t]
             size = self.tape[self.t + 1]
             self.t += 2 + size
-            return Ext(code, self.tape[self.t - size:self.t])
+            return Ext(code, bytes(self.tape[self.t - size:self.t]))
         if k == 13:
             self.t += 2
             return Timestamp(self.tape[self.t - 2], self.tape[self.t - 1])
@@ -313,22 +311,22 @@ export def dumps(value: Value, indent: int = 0, sort_keys: bool = False, ensure_
     _dump(value, w, 0)
     return ''.join(w.out)
 
-# MessagePack. The bytes are a list of ints from 0 to 255. Decoding gives the same Value values as loads, plus Bin,
+# MessagePack, from and to bytes (D17e). Decoding gives the same Value values as loads, plus Bin,
 # Ext and Timestamp; map keys must be text; NaN and infinite floats are kept (JSON text refuses them); an
 # invalid UTF-8 str, a byte 0xc1, truncated or trailing data and more than 512 levels of nesting are a MsgpackError.
 # Encoding writes each int in its shortest form (up to 64 bits, signed or unsigned), floats as float64 (one in the subnormal range
 # as the nearest double; one beyond the largest double or below half the smallest is a MsgpackError), text as str, a
 # Bin as bin, a Ext as ext and a Timestamp as the shortest timestamp.
-export def loads_msgpack(data: list[int]) -> Value:
+export def loads_msgpack(data: bytes) -> Value:
     b = Builder()
     if !tomato_msgpack_scan(data, b.tape, b.strs, b.nums) != 0:
         raise MsgpackError(b.strs[-1], b.tape[-1], 'E89')
     return b.build()
 
-export def dumps_msgpack(value: Value) -> list[int]:
+export def dumps_msgpack(value: Value) -> bytes:
     out: list[int] = []
     _pack(value, out, 0)
-    return out
+    return bytes(out)
 
 # File counterparts of loads and dumps (text files, UTF-8): load(path) reads and parses the file; dump(value, path, ...)
 # writes dumps(value, ...) to it, replacing it. An unreadable or unwritable path raises IOError, and the text is made
@@ -352,13 +350,13 @@ export def dump(value: Value, path: str, indent: int = 0, sort_keys: bool = Fals
 # MsgpackError as loads_msgpack does, and the bytes are made before the file is opened, so a value MessagePack cannot
 # hold (MsgpackError) leaves the file alone.
 export def load_msgpack(path: str) -> Value:
-    data: list[int] = []
+    data: list[bytes] = []
     r = !tomato_file_read_bytes(path, data)
     if r == 1:
         raise IOError(!tomato_file_error(path, r), 'E25')
     if r != 0:
         raise IOError(!tomato_file_error(path, r), 'E381')
-    return loads_msgpack(data)
+    return loads_msgpack(data[0])
 
 export def dump_msgpack(value: Value, path: str):
     data = dumps_msgpack(value)

@@ -3,18 +3,18 @@ peer: 127.0.0.1 True
 FROM B
 HELLO
 WORLD
-[72, 73, 10]
+b'HI\n'
 CAFÉ
-after bye: [] 0
+after bye: b'' 0
 closed: the socket is closed
 closed, even for empty text
 closed, even for empty bytes
 b ends: 0
 received 1048576 bytes
 read timed out
-then: []
-a byte must be an int from 0 to 255
-peer closed, recv gives []
+then: b''
+a byte must be a whole number from 0 to 255, but item 1 is 256
+peer closed, recv gives b''
 write after close: ConnectionResetError
 reader: the socket is closed
 descriptor reused: True

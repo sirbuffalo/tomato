@@ -45,6 +45,10 @@ async def main(base: str):
     print(r.text)
     r = await requests.put(base + '/echo', data='put body')
     print(r.text)
+    # a body of bytes is sent as it is (D17e), a zero byte too (the server's echo stops at it, but the length counts all six); content
+    # is bytes
+    r = await requests.post(base + '/echo', data=b'\xffbin\x00\x01')
+    print('bytes body', 'content-length: 6' in r.text, r.content.endswith(b'--\n\xffbin'), r.content[-1])
     r = await requests.delete(base + '/echo')
     print(r.text)
     r = await requests.get(base + '/echo', params={'k': 'v w', 'é': '1'})

@@ -49,10 +49,10 @@ def main():
     try_parse('-a1b2c3d4e5f647898abcdef01234567')
     # the class: 16 bytes, equality, str
     try:
-        print(UUID([1, 2, 3]))
+        print(UUID(b'\x01\x02\x03'))
     catch ValueError as e:
         print('ValueError:', e.message, e.id)
-    print(UUID([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 255]))
+    print(UUID(bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 255])))
     print(f'{dns} and {url}')
     # version 4: random, the version nibble is 4 and the variant bits are 10
     seen: dict[str, bool] = {}

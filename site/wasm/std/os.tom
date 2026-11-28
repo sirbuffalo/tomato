@@ -21,8 +21,8 @@ import sys
 !tomato_os_error(what: str) -> str
 !tomato_file_error(path: str, code: int) -> str
 !tomato_os_kind() -> int
-!tomato_file_read_bytes(path: str, out: list[int]) -> int
-!tomato_file_write_bytes_mode(path: str, data: list[int], append: int) -> int
+!tomato_file_read_bytes(path: str, out: list[bytes]) -> int
+!tomato_file_write_bytes_mode(path: str, data: bytes, append: int) -> int
 
 export class StatResult:
     size: int = 0
@@ -217,21 +217,17 @@ export def write_text(path: str, text: str, append: bool = False):
     finally:
         f.close()
 
-# The whole file as a list of bytes (ints from 0 to 255), or written from one. A value outside 0 to 255 is a ValueError and the
-# file is not touched.
-export def read_bytes(path: str) -> list[int]:
+# The whole file as bytes, or written from bytes (replacing the file, or after its end with append=True).
+export def read_bytes(path: str) -> bytes:
     _no_nul(path)
-    data: list[int] = []
+    data: list[bytes] = []
     code = !tomato_file_read_bytes(path, data)
     if code != 0:
         _raise(!tomato_os_kind(), !tomato_file_error(path, code))
-    return data
+    return data[0]
 
-export def write_bytes(path: str, data: list[int], append: bool = False):
+export def write_bytes(path: str, data: bytes, append: bool = False):
     _no_nul(path)
-    for b in data:
-        if b < 0 or b > 255:
-            raise ValueError('a byte must be a whole number from 0 to 255', 'E391')
     code = !tomato_file_write_bytes_mode(path, data, 1 if append else 0)
     if code != 0:
         _raise(!tomato_os_kind(), !tomato_file_error(path, code))

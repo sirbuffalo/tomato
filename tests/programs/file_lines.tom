@@ -96,10 +96,10 @@ def main(dir: str = '/tmp'):
     for line in f:
         print(show(line), len(line))
     f.close()
-    os.write_bytes(path, [255, 10, 195, 40, 10, 65])
+    os.write_bytes(path, b'\xff\n\xc3(\nA')
     f = open(path)
     for line in f:
-        print(utf8.encode(line))
+        print(list(utf8.encode(line)))
     f.close()
     # writelines (no separator added) and flush
     f = open(path, 'w')

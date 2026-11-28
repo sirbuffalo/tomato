@@ -1,6 +1,6 @@
 -- round trips
 every kind True dict
-tomato é ✓ 🍅 18446744073709551615 [0, 1, 127, 128, 255] 5 123456789 -1
+tomato é ✓ 🍅 18446744073709551615 b'\x00\x01\x7f\x80\xff' 5 123456789 -1
 nan -inf
 top level True null
 top level True bool
@@ -29,7 +29,7 @@ True
 -- values MessagePack cannot hold leave the file alone
 513 levels MsgpackError E82 nesting is deeper than 512 levels
 65-bit int MsgpackError E86 the integer 36893488147419103232 does not fit in 64 bits
-bad byte MsgpackError E83 a byte must be an int from 0 to 255
+bad byte E391 a byte must be a whole number from 0 to 255, but item 1 is 256
 bad ext type MsgpackError E87 the ext type -1 must be from -128 to 127 and not -1
 bad nanos MsgpackError E84 timestamp nanoseconds must be from 0 to 999999999
 still loaded "kept"

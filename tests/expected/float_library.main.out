@@ -21,9 +21,9 @@ True True False
 [10.0] [2e-17]
 JSONDecodeError: Number out of range: line 1 column 2 (char 1) JSONDecodeError: Number out of range: line 1 column 1 (char 0)
 JSONEncodeError E525 the float 0x1p+167102221026104
-[203, 0, 0, 0, 0, 0, 0, 0, 1] [203, 63, 248, 0, 0, 0, 0, 0, 0]
-[146, 203, 0, 0, 18, 104, 139, 112, 230, 43, 203, 0, 0, 0, 0, 0, 0, 19, 196] [203, 0, 0, 0, 0, 0, 0, 0, 1]
-[145, 203, 0, 0, 0, 0, 0, 0, 0, 2]
+b'\xcb\x00\x00\x00\x00\x00\x00\x00\x01' b'\xcb?\xf8\x00\x00\x00\x00\x00\x00'
+b'\x92\xcb\x00\x00\x12h\x8bp\xe6+\xcb\x00\x00\x00\x00\x00\x00\x13\xc4' b'\xcb\x00\x00\x00\x00\x00\x00\x00\x01'
+b'\x91\xcb\x00\x00\x00\x00\x00\x00\x00\x02'
 MsgpackError E526 the float 1e+400 does not fit in a 64-bit float, the largest MessagePack has
 MsgpackError E526 the float 1e-400 does not fit in a 64-bit float, the largest MessagePack has
 MsgpackError E526 the float -1.970071114017047e+434 does not fit in a 64-bit float, the largest MessagePack has

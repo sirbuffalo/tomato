@@ -17,18 +17,13 @@ f8fc
 ffffffffffffff
 00000000
 8080808080
-ValueError
-ValueError
-ValueError
-ValueError
-ValueError
-[]
-[0]
-[255]
-[255]
-[222, 173, 190, 239]
-[222, 173, 190, 239]
-[222, 173, 190, 239]
+b''
+b'\x00'
+b'\xff'
+b'\xff'
+b'\xde\xad\xbe\xef'
+b'\xde\xad\xbe\xef'
+b'\xde\xad\xbe\xef'
 ValueError
 ValueError
 ValueError
@@ -47,9 +42,9 @@ ValueError
 ValueError
 ValueError
 ValueError
-[170]
-[0, 17, 34, 51, 68, 85, 102, 119, 136, 153, 170, 187, 204, 221, 238, 255]
-[1, 35, 69, 103, 137, 171, 205, 239, 171, 205, 239]
+b'\xaa'
+b'\x00\x11"3DUfw\x88\x99\xaa\xbb\xcc\xdd\xee\xff'
+b'\x01#Eg\x89\xab\xcd\xef\xab\xcd\xef'
 ValueError
 ValueError
 ValueError

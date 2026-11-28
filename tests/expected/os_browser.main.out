@@ -13,7 +13,7 @@ one|two| 8 True
 8 True False False True False
 [B, _, a, b, p2, z.txt, é] True False
 [B, _, a, b, p2, é] []
-[0, 1, 254, 255, 7]
+b'\x00\x01\xfe\xff\x07'
 listdir E505
 mkdir E506
 mkdir parent E505

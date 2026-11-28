@@ -72,7 +72,7 @@ def token_kind(t: Token) -> str:
         return 'name'
     if t.kind == 'INT' or t.kind == 'FLOAT':
         return 'number'
-    if t.kind == 'STR':
+    if t.kind == 'STR' or t.kind == 'BYTES':
         return 'string'
     return 'op'
 
@@ -284,3 +284,16 @@ def the_scanners_do_not_change_what_lex_makes():
     assert_equal(kinds, 'NAME OP OP STR OP NAME OP NAME OP OP STR OP OP FLOAT NEWLINE EOF')
     assert_equal(toks[len(toks) - 3].scale, 3)
     assert_equal(lex_error("print('a\\qb')"), "this text has an unknown escape '\\q'\nuse one of \\n \\t \\r \\0 \\\\ \\' \\\" (to write a backslash, double it)")
+
+@test.bytes_literals
+def bytes_literals():
+    # b'...' is one BYTES token whose text is its bytes as hex digits (D17e); its span is a string, and its errors are lex's
+    toks = lex("x = b'A\\x00\\xff\\n' + b\"'\"")
+    kinds = ' '.join([t.kind for t in toks])
+    assert_equal(kinds, 'NAME OP BYTES OP BYTES NEWLINE EOF')
+    assert_equal(toks[2].text, '4100ff0a')
+    assert_equal(toks[4].text, '27')
+    agree("y = b'caf\\xc3\\xa9' + b'\\q'", 'a bytes literal with an unknown escape')
+    agree("y = b'café'", 'a bytes literal with a character that is not ASCII')
+    agree("y = b'\\x4'", 'a bytes literal with a short hex escape')
+    assert_equal(lex_error("print(b'\\x4g')"), 'a \\x escape in a bytes literal needs two hex digits\nwrite a byte as \\x00 to \\xff')

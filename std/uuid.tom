@@ -6,7 +6,7 @@
 #     print(uuid5(ns, 'python.org'))    # the same name always gives the same UUID: 886313e1-3b8a-5372-9b90-0c9aee199e5d
 #     parse(str(id)) == id              # True
 #
-# A `UUID` holds its 16 bytes (`data`, ints from 0 to 255, first byte first), prints as 32 lower case hex digits in the
+# A `UUID` holds its 16 bytes (`data`, a `bytes` of length 16, first byte first), prints as 32 lower case hex digits in the
 # groups 8-4-4-4-12 and compares with `==`. uuid5 is RFC 9562's version 5: SHA-1 of the namespace's 16 bytes followed by
 # the UTF-8 bytes of the name, the first 16 bytes of the digest with the version nibble set to 5 and the variant bits
 # to 10. SHA-1 is written here in Tomato (it is only a naming hash, not used for security). `parse` takes what Python's
@@ -16,16 +16,13 @@
 from secrets import token_bytes
 
 export class UUID:
-    data: list[int] = []
+    data: bytes = b''
 
     @init
-    def make(self, data: list[int]):
+    def make(self, data: bytes):
         if len(data) != 16:
             raise ValueError(f'a UUID needs 16 bytes, but got {len(data)}', 'E403')
-        for b in data:
-            if b < 0 or b > 255:
-                raise ValueError(f'a UUID needs 16 bytes, but got {len(data)}', 'E403')
-        self.data = data[:]
+        self.data = data
 
     @eq
     def same(self, other: UUID) -> bool:
@@ -33,49 +30,23 @@ export class UUID:
 
     @str
     def text(self) -> str:
-        digits = '0123456789abcdef'
-        out = ''
-        for i, b in enumerate(self.data):
-            if i == 4 or i == 6 or i == 8 or i == 10:
-                out += '-'
-            out += digits[b // 16] + digits[b % 16]
-        return out
+        h = self.data.hex()
+        return h[0:8] + '-' + h[8:12] + '-' + h[12:16] + '-' + h[16:20] + '-' + h[20:32]
 
 # a random (version 4) UUID: 122 random bits from the secure entropy, plus the version and variant bits
 export def uuid4() -> UUID:
-    data = token_bytes(16)
+    data = list(token_bytes(16))
     data[6] = (data[6] & 15) | 64
     data[8] = (data[8] & 63) | 128
-    return UUID(data)
-
-# the UTF-8 bytes of a text
-def _utf8(text: str) -> list[int]:
-    out: list[int] = []
-    for c in text:
-        n = ord(c)
-        if n < 128:
-            out.append(n)
-        elif n < 2048:
-            out.append(192 | (n >> 6))
-            out.append(128 | (n & 63))
-        elif n < 65536:
-            out.append(224 | (n >> 12))
-            out.append(128 | ((n >> 6) & 63))
-            out.append(128 | (n & 63))
-        else:
-            out.append(240 | (n >> 18))
-            out.append(128 | ((n >> 12) & 63))
-            out.append(128 | ((n >> 6) & 63))
-            out.append(128 | (n & 63))
-    return out
+    return UUID(bytes(data))
 
 def _rotl(x: int, k: int) -> int:
     return ((x << k) | (x >> (32 - k))) & 4294967295
 
-# SHA-1 (FIPS 180-4) of a list of bytes, as 20 bytes
-def _sha1(message: list[int]) -> list[int]:
+# SHA-1 (FIPS 180-4) of bytes, as 20 bytes
+def _sha1(message: bytes) -> bytes:
     m = 4294967295
-    padded = message[:]
+    padded = list(message)
     padded.append(128)
     while len(padded) % 64 != 56:
         padded.append(0)
@@ -127,15 +98,15 @@ def _sha1(message: list[int]) -> list[int]:
     for h in [h0, h1, h2, h3, h4]:
         for i in range(4):
             out.append((h >> (24 - 8 * i)) & 255)
-    return out
+    return bytes(out)
 
 # the name-based (version 5) UUID of a namespace UUID and a name: always the same for the same two inputs
 export def uuid5(namespace: UUID, name: str) -> UUID:
-    digest = _sha1(namespace.data + _utf8(name))
-    data = digest[:16]
+    digest = _sha1(namespace.data + name.encode())
+    data = list(digest[:16])
     data[6] = (data[6] & 15) | 80
     data[8] = (data[8] & 63) | 128
-    return UUID(data)
+    return UUID(bytes(data))
 
 def _hex_value(c: str) -> int:
     n = ord(c)
@@ -158,4 +129,4 @@ export def parse(text: str) -> UUID:
     data: list[int] = []
     for i in range(16):
         data.append(digits[2 * i] * 16 + digits[2 * i + 1])
-    return UUID(data)
+    return UUID(bytes(data))

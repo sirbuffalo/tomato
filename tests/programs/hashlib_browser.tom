@@ -1,12 +1,11 @@
 import hashlib
-import utf8
 @main
 def main():
-    data = utf8.encode('abc')
+    data = 'abc'.encode()
     print(hashlib.sha256(data).hexdigest())
     print(hashlib.sha224(data).hexdigest())
     print(hashlib.sha1(data).hexdigest())
     print(hashlib.md5(data).hexdigest())
-    h = hashlib.sha256([97])
-    h.update([98, 99])
+    h = hashlib.sha256(b'a')
+    h.update(b'bc')
     print(h.hexdigest())

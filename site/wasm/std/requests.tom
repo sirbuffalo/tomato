@@ -16,13 +16,12 @@ from json import loads, dumps
 from value import Value
 
 # the runtime's request functions (runtime/tomato_rt.c); a request is a number, and await _http_wait(n) waits for it
-!tomato_http_start(method: str, url: str, headers: str, body: str, body_mode: int, timeout: float, follow: int,
+!tomato_http_start(method: str, url: str, headers: str, body: bytes, body_mode: int, timeout: float, follow: int,
                    max_redirects: int) -> int
 !tomato_http_status(id: int) -> int
 !tomato_http_error_kind(id: int) -> int
 !tomato_http_error_text(id: int) -> str
-!tomato_http_body_len(id: int) -> int
-!tomato_http_body_byte(id: int, i: int) -> int
+!tomato_http_content(id: int) -> bytes
 !tomato_http_url(id: int) -> str
 !tomato_http_headers(id: int) -> str
 !tomato_http_text(id: int) -> str
@@ -62,7 +61,7 @@ export class HTTPError(RequestError):
         self.status = status
 
 # What the server answered. status is the code (200, 404, ...), ok is True below 400, text is the body as text (bytes
-# that are not valid UTF-8 become U+FFFD), content is the body as a list of byte values, headers has lower-case names (a
+# that are not valid UTF-8 become U+FFFD), content is the body as bytes, headers has lower-case names (a
 # name sent twice joins its values with ', '), and url is the address after redirects.
 export class Response:
     status: int = 0
@@ -70,7 +69,7 @@ export class Response:
     url: str = ''
     text: str = ''
     headers: dict[str, str] = {}
-    content: list[int] = []
+    content: bytes = b''
 
     # the body parsed as JSON; JSONDecodeError when it is not JSON
     def json(self) -> Value:
@@ -142,16 +141,22 @@ def _parse_headers(raw: str) -> dict[str, str]:
             out[name] = value
     return out
 
+# the bytes of a body given as text (its UTF-8) or as bytes
+def _body_bytes(data: str | bytes) -> bytes:
+    if data is bytes:
+        return data
+    return data.encode()
+
 # the general call: request('GET', url, ...). Use get, post and the others for the common cases.
 #   params   added to the url as ?name=value&...
-#   data     the body as text, sent as it is
+#   data     the body as text (sent as its UTF-8) or as bytes, sent as they are
 #   form     the body as an HTML form made from a dict (application/x-www-form-urlencoded)
 #   json     the body as JSON (Content-Type: application/json): a Value value (sent as dumps(value)) or ready-made
 #            JSON text
 #   headers  extra request headers
 #   timeout  seconds for the whole request (0 means no limit); TimeoutError when it runs out
 #   follow_redirects, max_redirects   follow 3xx answers (the default), at most that many times
-export async def request(method: str, url: str, params: dict[str, str] = {}, data: str = '', form: dict[str, str] = {},
+export async def request(method: str, url: str, params: dict[str, str] = {}, data: str | bytes = '', form: dict[str, str] = {},
                          json: str | Value = '', headers: dict[str, str] = {}, timeout: float = 0.0,
                          follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     hdr: dict[str, str] = {}
@@ -163,28 +168,29 @@ export async def request(method: str, url: str, params: dict[str, str] = {}, dat
         if '?' in url:
             sep = '&'
         full = url + sep + _form(params)
-    body = ''
+    body = b''
     has_body = 0
     json_given = False
     if json is str:
         if json != '':
             json_given = True
-            body = json
+            body = json.encode()
     else:
         json_given = True
-        body = dumps(json)
+        body = dumps(json).encode()
     if json_given:
         has_body = 1
         if not _has_header(hdr, 'content-type'):
             hdr['Content-Type'] = 'application/json'
     elif len(form) > 0:
         has_body = 1
-        body = _form(form)
+        body = _form(form).encode()
         if not _has_header(hdr, 'content-type'):
             hdr['Content-Type'] = 'application/x-www-form-urlencoded'
-    elif data != '':
-        has_body = 1
-        body = data
+    else:
+        body = _body_bytes(data)
+        if len(body) > 0:
+            has_body = 1
     follow = 1 if follow_redirects else 0
     id = !tomato_http_start(method.upper(), full, _header_lines(hdr), body, has_body, float(timeout), follow,
                             max_redirects)
@@ -208,13 +214,7 @@ export async def request(method: str, url: str, params: dict[str, str] = {}, dat
         r.url = !tomato_http_url(id)
         r.text = !tomato_http_text(id)
         r.headers = _parse_headers(!tomato_http_headers(id))
-        # content is copied byte by byte: fine for ordinary pages, slow and memory-heavy for bodies of hundreds of
-        # megabytes
-        n = !tomato_http_body_len(id)
-        content: list[int] = []
-        for i in range(n):
-            content.append(!tomato_http_body_byte(id, i))
-        r.content = content
+        r.content = !tomato_http_content(id)
         return r
     finally:
         !tomato_http_free(id)
@@ -234,19 +234,19 @@ export async def delete(url: str, params: dict[str, str] = {}, headers: dict[str
     return await request('DELETE', url, params=params, headers=headers, timeout=timeout,
                          follow_redirects=follow_redirects, max_redirects=max_redirects)
 
-export async def post(url: str, params: dict[str, str] = {}, data: str = '', form: dict[str, str] = {},
+export async def post(url: str, params: dict[str, str] = {}, data: str | bytes = '', form: dict[str, str] = {},
                       json: str | Value = '', headers: dict[str, str] = {}, timeout: float = 0.0,
                       follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('POST', url, params=params, data=data, form=form, json=json, headers=headers,
                          timeout=timeout, follow_redirects=follow_redirects, max_redirects=max_redirects)
 
-export async def put(url: str, params: dict[str, str] = {}, data: str = '', form: dict[str, str] = {},
+export async def put(url: str, params: dict[str, str] = {}, data: str | bytes = '', form: dict[str, str] = {},
                      json: str | Value = '', headers: dict[str, str] = {}, timeout: float = 0.0,
                      follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('PUT', url, params=params, data=data, form=form, json=json, headers=headers,
                          timeout=timeout, follow_redirects=follow_redirects, max_redirects=max_redirects)
 
-export async def patch(url: str, params: dict[str, str] = {}, data: str = '', form: dict[str, str] = {},
+export async def patch(url: str, params: dict[str, str] = {}, data: str | bytes = '', form: dict[str, str] = {},
                        json: str | Value = '', headers: dict[str, str] = {}, timeout: float = 0.0,
                        follow_redirects: bool = True, max_redirects: int = 20) -> Response:
     return await request('PATCH', url, params=params, data=data, form=form, json=json, headers=headers,

@@ -116,6 +116,8 @@ def found_text(t: Token) -> str:
         return 'the end of the file'
     if t.kind == 'STR':
         return 'a text'
+    if t.kind == 'BYTES':
+        return 'a bytes literal'
     if t.kind == 'KW':
         return f"the word '{t.text}'"
     return f"'{t.text}'"
@@ -1386,6 +1388,9 @@ export class Parser:
         if t.kind == 'STR':
             self.adv()
             return mk('StrLit', t.line, [vs(t.text)])
+        if t.kind == 'BYTES':
+            self.adv()
+            return mk('BytesLit', t.line, [vs(t.text)])       # the bytes as hex digits, two for each (lexer.tom, bytes_hex)
         if t.kind == 'KW' and (t.text == 'True' or t.text == 'False'):
             self.adv()
             return mk('BoolLit', t.line, [vb(t.text == 'True')])

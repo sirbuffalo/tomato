@@ -1,4 +1,12 @@
-# Integer binary encodings with standard sizes and no alignment.
+# Integer and float binary encodings with standard sizes and no alignment. Binary data is `bytes`:
+#
+#     print(struct.int_to_bytes(258, 2))                   # b'\x01\x02'
+#     print(struct.pack_ints('>HB', [258, 7]))             # b'\x01\x02\x07'
+#     print(struct.unpack_ints('<H', b'\x02\x01'))         # [258]
+#
+# int_to_bytes(value, length, byteorder='big', signed=False) -> bytes, int_from_bytes(data: bytes, byteorder, signed) -> int,
+# pack_ints(fmt, values) -> bytes, unpack_ints(fmt, data: bytes) -> list[int], calcsize(fmt) -> int,
+# Packer (raw(data: bytes), text, bytes() -> bytes, u8 ... f64) and Reader(data: bytes, byteorder) (read_raw(n) -> bytes, read_text, read_u8 ... read_f64).
 import utf8
 import math
 
@@ -11,7 +19,10 @@ def _order(byteorder: str) -> bool:
         return False
     raise ValueError('invalid byte order', 'E499')
 
-export def int_to_bytes(value: int, length: int, byteorder: str = 'big', signed: bool = False) -> list[int]:
+export def int_to_bytes(value: int, length: int, byteorder: str = 'big', signed: bool = False) -> bytes:
+    return bytes(_int_list(value, length, byteorder, signed))
+
+def _int_list(value: int, length: int, byteorder: str, signed: bool) -> list[int]:
     big = _order(byteorder)
     if length < 0:
         raise ValueError('length must be nonnegative', 'E499')
@@ -34,13 +45,11 @@ export def int_to_bytes(value: int, length: int, byteorder: str = 'big', signed:
         out.reverse()
     return out
 
-export def int_from_bytes(data: list[int], byteorder: str = 'big', signed: bool = False) -> int:
+export def int_from_bytes(data: bytes, byteorder: str = 'big', signed: bool = False) -> int:
     big = _order(byteorder)
     x = 0
     for i in range(len(data)):
         b = data[i]
-        if b < 0 or b > 255:
-            raise ValueError('a byte must be from 0 to 255', 'E391')
         if big:
             x = x * 256 + b
         else:
@@ -110,7 +119,7 @@ export def calcsize(fmt: str) -> int:
         n += _size(c)
     return n
 
-export def pack_ints(fmt: str, values: list[int]) -> list[int]:
+export def pack_ints(fmt: str, values: list[int]) -> bytes:
     f = _Format(fmt)
     order = 'little'
     if f.big:
@@ -123,19 +132,16 @@ export def pack_ints(fmt: str, values: list[int]) -> list[int]:
         else:
             if i >= len(values):
                 raise StructError('wrong number of values', 'E503')
-            out.extend(int_to_bytes(values[i], _size(c), order, _signed(c)))
+            out.extend(_int_list(values[i], _size(c), order, _signed(c)))
             i += 1
     if i != len(values):
         raise StructError('wrong number of values', 'E503')
-    return out
+    return bytes(out)
 
-export def unpack_ints(fmt: str, data: list[int]) -> list[int]:
+export def unpack_ints(fmt: str, data: bytes) -> list[int]:
     f = _Format(fmt)
     if len(data) != calcsize(fmt):
         raise StructError('wrong buffer size', 'E503')
-    for b in data:
-        if b < 0 or b > 255:
-            raise ValueError('a byte must be from 0 to 255', 'E391')
     order = 'little'
     if f.big:
         order = 'big'
@@ -256,66 +262,63 @@ export class Packer:
         self.order = byteorder
         self.data = []
 
-    def raw(self, data: list[int]):
-        for b in data:
-            if b < 0 or b > 255:
-                raise ValueError('a byte must be from 0 to 255', 'E391')
-        self.data.extend(data)
+    def raw(self, data: bytes):
+        self.data.extend(list(data))
+
+    def _put(self, items: list[int]):
+        self.data.extend(items)
 
     def text(self, value: str):
         self.raw(utf8.encode(value))
 
-    def bytes(self) -> list[int]:
-        return self.data[:]
+    def bytes(self) -> bytes:
+        return bytes(self.data)
 
     def u8(self, value: int):
-        self.raw(int_to_bytes(value, 1, self.order, False))
+        self._put(_int_list(value, 1, self.order, False))
 
     def u16(self, value: int):
-        self.raw(int_to_bytes(value, 2, self.order, False))
+        self._put(_int_list(value, 2, self.order, False))
 
     def u32(self, value: int):
-        self.raw(int_to_bytes(value, 4, self.order, False))
+        self._put(_int_list(value, 4, self.order, False))
 
     def u64(self, value: int):
-        self.raw(int_to_bytes(value, 8, self.order, False))
+        self._put(_int_list(value, 8, self.order, False))
 
     def i8(self, value: int):
-        self.raw(int_to_bytes(value, 1, self.order, True))
+        self._put(_int_list(value, 1, self.order, True))
 
     def i16(self, value: int):
-        self.raw(int_to_bytes(value, 2, self.order, True))
+        self._put(_int_list(value, 2, self.order, True))
 
     def i32(self, value: int):
-        self.raw(int_to_bytes(value, 4, self.order, True))
+        self._put(_int_list(value, 4, self.order, True))
 
     def i64(self, value: int):
-        self.raw(int_to_bytes(value, 8, self.order, True))
+        self._put(_int_list(value, 8, self.order, True))
 
     def f32(self, value: float):
-        self.raw(int_to_bytes(_float_bits(value, 8, 23), 4, self.order, False))
+        self._put(_int_list(_float_bits(value, 8, 23), 4, self.order, False))
 
     def f64(self, value: float):
-        self.raw(int_to_bytes(_float_bits(value, 11, 52), 8, self.order, False))
+        self._put(_int_list(_float_bits(value, 11, 52), 8, self.order, False))
 
 export class Reader:
-    data: list[int] = []
+    data: bytes = b''
     order: str = 'big'
     pos: int = 0
     @init
-    def make(self, data: list[int], byteorder: str = '>'):
+    def make(self, data: bytes, byteorder: str = '>'):
         _order(byteorder)
-        for b in data:
-            if b < 0 or b > 255:
-                raise ValueError('a byte must be from 0 to 255', 'E391')
-        self.data = data[:]
+        self.data = data
         self.order = byteorder
         self.pos = 0
 
     def remaining(self) -> int:
         return len(self.data) - self.pos
 
-    def read_raw(self, n: int) -> list[int]:
+    def read_raw(self, n: int) -> bytes:
         if n < 0 or n > self.remaining():
             raise ValueError('not enough bytes', 'E499')
         out = self.data[self.pos:self.pos+n]
@@ -353,7 +356,7 @@ export class Reader:
     def read_i64(self) -> int:
         return int_from_bytes(self.read_raw(8), self.order, True)
 
-    def _peek(self, n: int) -> list[int]:
+    def _peek(self, n: int) -> bytes:
         if n > self.remaining():
             raise ValueError('not enough bytes', 'E499')
         return self.data[self.pos:self.pos+n]

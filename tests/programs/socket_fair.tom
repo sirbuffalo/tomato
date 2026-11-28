@@ -14,7 +14,7 @@ async def echo(c: socket.Socket):
 
 async def ping(c: socket.Socket, t0: float):
     while clock() - t0 < 8.0:
-        await c.send([1])
+        await c.send(b'\x01')
         await c.recv(100)
 
 async def waits(seconds: float):
@@ -23,7 +23,7 @@ async def waits(seconds: float):
 # every call has something to do, so none of them waits
 async def never_waits(c: socket.Socket, d: socket.Socket, t0: float):
     while clock() - t0 < 8.0:
-        await c.send([1])
+        await c.send(b'\x01')
         await d.recv(10)
 
 class Sent:
@@ -45,7 +45,7 @@ class Rounds:
 async def count_rounds(c: socket.Socket, r: Rounds):
     try:
         while r.n >= 0:
-            await c.send([1])
+            await c.send(b'\x01')
             await c.recv(100)
             r.n += 1
     catch socket.SocketError:
@@ -89,7 +89,7 @@ async def main():
     s = start spin(stop)
     r = start b.recv(10)
     await sleep(0)
-    await a.send([1])
+    await a.send(b'\x01')
     print(await r)
     stop.on = True
     print('socket served while another task spins:', await s == 1)

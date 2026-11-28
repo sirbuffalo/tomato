@@ -1,0 +1,4 @@
+# bytes has the methods of D17e only
+@main
+def main():
+    print(b'a'.upper())

@@ -1,7 +1,7 @@
 import utf8
 import zlib
 
-def bad(data: list[int], mode: str):
+def bad(data: bytes, mode: str):
     try:
         print(utf8.decode(data, mode))
     catch ValueError:
@@ -10,32 +10,23 @@ def bad(data: list[int], mode: str):
 @main
 def main():
     print(utf8.encode('hé😀'))
-    print(utf8.decode([104, 195, 169, 240, 159, 152, 128]))
-    bad([226, 130, 65], 'replace')
-    bad([240, 159, 152], 'replace')
-    bad([224, 128, 128], 'replace')
-    bad([237, 160, 128], 'replace')
-    bad([244, 144, 128, 128], 'replace')
-    bad([226, 130, 65], 'strict')
-    bad([256], 'replace')
-    bad([-1], 'replace')
-    bad([], 'ignore')
+    print(utf8.decode(b'h\xc3\xa9\xf0\x9f\x98\x80'))
+    bad(b'\xe2\x82A', 'replace')
+    bad(b'\xf0\x9f\x98', 'replace')
+    bad(b'\xe0\x80\x80', 'replace')
+    bad(b'\xed\xa0\x80', 'replace')
+    bad(b'\xf4\x90\x80\x80', 'replace')
+    bad(b'\xe2\x82A', 'strict')
+    bad(b'', 'ignore')
     a = utf8.encode('1234')
     b = utf8.encode('56789')
     print(zlib.crc32(a + b), zlib.crc32(b, zlib.crc32(a)))
     print(zlib.adler32(utf8.encode('Wikipedia')))
     print(zlib.adler32(b, zlib.adler32(a)), zlib.adler32(a + b))
-    print(zlib.crc32([], 4294967295), zlib.adler32([], 4294967295))
+    print(zlib.crc32(b'', 4294967295), zlib.adler32(b'', 4294967295))
     # crc32 works bit by bit below 256 bytes and with a table from there, and the two must agree across a split
-    long: list[int] = []
+    items: list[int] = []
     for i in range(300):
-        long.append(i % 251)
+        items.append(i % 251)
+    long = bytes(items)
     print(zlib.crc32(long), zlib.crc32(long[0:255]), zlib.crc32(long[255:300], zlib.crc32(long[0:255])), zlib.crc32(long[0:256]))
-    try:
-        print(zlib.crc32([256]))
-    catch ValueError:
-        print('ValueError')
-    try:
-        print(zlib.adler32([-1]))
-    catch ValueError:
-        print('ValueError')

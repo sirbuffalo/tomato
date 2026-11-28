@@ -1,0 +1,4 @@
+# \x in a bytes literal needs two hex digits (D17e)
+@main
+def main():
+    print(b'\x4g')

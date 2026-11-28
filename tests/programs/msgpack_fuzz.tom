@@ -5,8 +5,8 @@ from value import Bin, Ext, Timestamp
 @main
 def main():
     doc = loads('{"a": [1, -2500, true, false, null, 1.5, "x\\ny\\u00e9\\ud83d\\ude00"], "b": {"c": {}, "d": [], "e": 18446744073709551615}, "f": "日本語"}')
-    doc.as_dict()['bin'] = Bin([1, 2, 3])
-    doc.as_dict()['ext'] = Ext(7, [1, 2, 3, 4])
+    doc.as_dict()['bin'] = Bin(bytes([1, 2, 3]))
+    doc.as_dict()['ext'] = Ext(7, bytes([1, 2, 3, 4]))
     doc.as_dict()['ts'] = Timestamp(1700000000, 42)
     base = dumps_msgpack(doc)
     seed = 4242
@@ -14,7 +14,7 @@ def main():
     bad = 0
     for round in range(8000):
         seed = (seed * 1103515245 + 12345) % 2147483648
-        data: list[int] = [x for x in base]
+        data: list[int] = list(base)
         for k in range(1 + seed % 3):
             seed = (seed * 1103515245 + 12345) % 2147483648
             pos = seed % len(data)
@@ -29,7 +29,7 @@ def main():
             if len(data) == 0:
                 data = [192]
         try:
-            j = loads_msgpack(data)
+            j = loads_msgpack(bytes(data))
             again = loads_msgpack(dumps_msgpack(j))
             if len(dumps_msgpack(again)) != len(dumps_msgpack(j)):
                 print('round trip failed')

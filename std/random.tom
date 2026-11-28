@@ -6,8 +6,9 @@
 #     shuffle(rng, cards)               # reorders the list in place
 #     print(sample(rng, cards, 5))      # five different items, in a random order
 #
-# What is here: random(), seed(seed), randint(a, b), randrange(start, stop, step), uniform(a, b) and gauss(mu, sigma)
-# on a `Random`, and the functions choice(rng, items), shuffle(rng, items) and sample(rng, items, k). The module has no
+# What is here: random(), seed(seed), randint(a, b), randrange(start, stop, step), uniform(a, b), gauss(mu, sigma) and
+# randbytes(n) (n random bytes: each 32-bit output gives four bytes, least significant first, and the last output gives the
+# top bytes it needs) on a `Random`, and the functions choice(rng, items), shuffle(rng, items) and sample(rng, items, k). The module has no
 # hidden shared generator and no module-level functions (the language has no top-level values): make a `Random` and
 # pass it around. A `Random` is NOT secure; use `secrets` for passwords, tokens and keys.
 #
@@ -145,6 +146,22 @@ export class Random:
         if count <= 0:
             raise ValueError(f'randrange has no numbers in range({start}, {stop}, {step})', 'E398')
         return start + step * self._below(count)
+
+    # n random bytes, as `bytes`
+    def randbytes(self, n: int) -> bytes:
+        if n < 0:
+            raise ValueError(f'randbytes needs a length of 0 or more, but got {n}', 'E642')
+        out: list[int] = []
+        left = n
+        while left > 0:
+            word = self._next32()
+            if left < 4:
+                word = word >> (32 - 8 * left)
+            take = min(left, 4)
+            for i in range(take):
+                out.append((word >> (8 * i)) & 255)
+            left -= take
+        return bytes(out)
 
     # a float from a to b (b may be the result because of rounding, as in Python)
     def uniform(self, a: float, b: float) -> float:

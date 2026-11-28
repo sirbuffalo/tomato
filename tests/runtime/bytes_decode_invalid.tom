@@ -1,0 +1,4 @@
+@main
+def main():
+    data = b'a\xc3('
+    print(data.decode())

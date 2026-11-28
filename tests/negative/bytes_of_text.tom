@@ -1,0 +1,4 @@
+# bytes(s) is refused: a text has no single byte form, s.encode() gives its UTF-8 (D17e)
+@main
+def main():
+    print(bytes('abc'))

@@ -9,7 +9,7 @@
 !tomato_platform() -> str
 !tomato_run(argv: list[str], extra_env: list[str], cwd: str, has_cwd: int, text: str, capture: int, timeout_ms: int, out: list[str], info: list[int]) -> int
 !tomato_os_error(what: str) -> str
-!tomato_file_read_bytes(path: str, out: list[int]) -> int
+!tomato_file_read_bytes(path: str, out: list[bytes]) -> int
 !tomato_proc_spawn(argv: list[str], extra_env: list[str], cwd: str, has_cwd: int, flags: int, info: list[int]) -> int
 !tomato_proc_text_size(text: str) -> int
 !tomato_proc_write(fd: int, text: str, off: int) -> int
@@ -114,8 +114,9 @@ def _raise_start(kind: int, program: str, where: str, has_cwd: bool, message: st
         path = program
         if has_cwd and not program.startswith('/'):
             path = where + '/' + program
-        head: list[int] = []
-        if !tomato_file_read_bytes(path, head) == 0 and len(head) > 2 and head[0] == 35 and head[1] == 33:
+        got: list[bytes] = []
+        if !tomato_file_read_bytes(path, got) == 0 and got[0].startswith(b'#!'):
+            head = got[0]
             line = ''
             i = 2
             while i < len(head) and head[i] != 10 and i < 300:

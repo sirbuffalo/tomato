@@ -1,9 +1,9 @@
 address: 127.0.0.1 1234 4
-packet: [1, 2, 3] 127.0.0.1 True
-empty: [] 127.0.0.1 True
+packet: b'\x01\x02\x03' 127.0.0.1 True
+empty: b'' 127.0.0.1 True
 truncated
 timeout
-after timeout: [4]
+after timeout: b'\x04'
 waiter woken
 closed
 bad port

@@ -1,5 +1,5 @@
-# os.read_bytes and os.write_bytes: all 256 byte values round trip, append adds to the end, and a bad value leaves the file
-# untouched (the check runs before the file is opened). The work directory comes from tests/run.sh.
+# os.read_bytes and os.write_bytes, which take and give bytes (D17e): all 256 byte values round trip, append adds to the end, and a
+# list with a value outside 0 to 255 cannot become bytes, so the file is never touched. The work directory comes from tests/run.sh.
 import os
 import ospath
 
@@ -8,39 +8,40 @@ def main(dir: str = '/tmp'):
     path = dir + '/tomato_bytes_files.bin'
     if ospath.exists(path):
         os.remove(path)
-    every: list[int] = []
+    every_int: list[int] = []
     for i in range(256):
-        every.append(i)
+        every_int.append(i)
+    every = bytes(every_int)
     os.write_bytes(path, every)
     back = os.read_bytes(path)
     print(len(back), back == every, ospath.getsize(path), back[0], back[255], sum(back))
     # a text file with the same bytes
-    os.write_bytes(path, [104, 105, 10])
+    os.write_bytes(path, b'hi\n')
     print(os.read_text(path).replace('\n', '|'), os.read_bytes(path))
     # append, and an empty list
-    os.write_bytes(path, [1, 2], append=True)
-    os.write_bytes(path, [], append=True)
-    os.write_bytes(path, [255], True)
+    os.write_bytes(path, b'\x01\x02', append=True)
+    os.write_bytes(path, b'', append=True)
+    os.write_bytes(path, b'\xff', True)
     print(os.read_bytes(path))
-    os.write_bytes(path, [])
+    os.write_bytes(path, b'')
     print(os.read_bytes(path), ospath.getsize(path))
     # append creates the file
     os.remove(path)
-    os.write_bytes(path, [9, 8, 7], append=True)
+    os.write_bytes(path, b'\t\x08\x07', append=True)
     print(os.read_bytes(path))
-    # a bad value is a ValueError and the file does not change (not truncated, not created)
+    # a bad value is a ValueError from bytes(), before write_bytes runs, so the file does not change (not truncated, not created)
     for bad in [[1, 256], [-1], [0, 1, 2, 1000], [300, 1]]:
         try:
-            os.write_bytes(path, bad)
+            os.write_bytes(path, bytes(bad))
         catch ValueError as e:
             print('write', e.id, os.read_bytes(path))
         try:
-            os.write_bytes(path, bad, append=True)
+            os.write_bytes(path, bytes(bad), append=True)
         catch ValueError as e:
             print('append', e.id, os.read_bytes(path))
     missing = dir + '/tomato_bytes_files_missing/x.bin'
     try:
-        os.write_bytes(missing, [1, 400])
+        os.write_bytes(missing, bytes([1, 400]))
     catch ValueError as e:
         print('bad value before open', e.id, ospath.exists(dir + '/tomato_bytes_files_missing'))
     # errors from the file system
@@ -49,7 +50,7 @@ def main(dir: str = '/tmp'):
     catch FileNotFoundError as e:
         print('read missing', e.id)
     try:
-        os.write_bytes(missing, [1])
+        os.write_bytes(missing, b'\x01')
     catch FileNotFoundError as e:
         print('write missing dir', e.id)
     try:
@@ -57,17 +58,18 @@ def main(dir: str = '/tmp'):
     catch IsADirectoryError as e:
         print('read dir', e.id)
     try:
-        os.write_bytes(dir, [1])
+        os.write_bytes(dir, b'\x01')
     catch IsADirectoryError as e:
         print('write dir', e.id)
     try:
-        os.write_bytes(path + '/inside', [1])
+        os.write_bytes(path + '/inside', b'\x01')
     catch NotADirectoryError as e:
         print('write inside file', e.id)
     # a large round trip
-    big: list[int] = []
+    big_ints: list[int] = []
     for i in range(300000):
-        big.append(i % 251)
+        big_ints.append(i % 251)
+    big = bytes(big_ints)
     os.write_bytes(path, big)
     again = os.read_bytes(path)
     print(len(again), again == big, again[299999])

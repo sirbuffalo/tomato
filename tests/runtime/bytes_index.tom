@@ -1,0 +1,4 @@
+@main
+def main():
+    data = b"abc"
+    print(data[3])

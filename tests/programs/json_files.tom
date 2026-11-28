@@ -24,7 +24,7 @@ def main(dir: str = '/tmp'):
     f.close()
     # a value JSON cannot hold leaves the file alone
     try:
-        dump(loads_msgpack([196, 1, 65]), path)
+        dump(loads_msgpack(bytes([196, 1, 65])), path)
     catch JSONEncodeError as e:
         print('encode error')
     print(dumps(load(path)))

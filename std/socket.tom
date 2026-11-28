@@ -3,7 +3,7 @@
 #     conn = await socket.connect('example.com', 80)     # tries every address the name has (IPv4 and IPv6)
 #     await conn.send_text('GET / HTTP/1.0\r\nHost: example.com\r\n\r\n')
 #     status = await conn.recv_line()                     # 'HTTP/1.0 200 OK\r\n'
-#     rest = await conn.recv(4096)                        # up to 4096 bytes as list[int]; [] once the other side closed
+#     rest = await conn.recv(4096)                        # up to 4096 bytes; b'' once the other side closed
 #     conn.close()
 #
 #     server = await socket.listen('127.0.0.1', 8080)     # port 0 picks a free port: server.port says which
@@ -12,7 +12,7 @@
 #         start handle(c)
 #
 #     udp = await socket.udp('127.0.0.1', 0)       # bind; udp.port is the chosen port
-#     await udp.sendto([104, 105], '127.0.0.1', 9000)
+#     await udp.sendto(b'hi', '127.0.0.1', 9000)
 #     data, host, port = await udp.recvfrom()        # one datagram and its numeric sender
 #     udp.close()                                   # empty datagrams are valid; truncation raises SocketError
 #     addresses = await socket.getaddrinfo('localhost', 80) # Address.host, .port, .family (4 or 6)
@@ -20,7 +20,7 @@
 # Name lookup runs in a helper thread, so other tasks run while it waits. Cancelling a lookup does not wait for the
 # operating system resolver to finish. UDP sends use the socket's address family; each send is one datagram.
 #
-# Bytes are list[int] (each 0-255), as in requests' Response.content; send_text and recv_line cover text protocols
+# Data is bytes (send, recv, sendto, recvfrom), as in requests' Response.content; send_text and recv_line cover text protocols
 # (UTF-8, and bytes that are not valid UTF-8 come back as U+FFFD). send waits until everything is sent. Every wait lets
 # other tasks run, and nothing polls: the scheduler waits on the descriptors together with sleeps and requests.
 # Timeouts come from asyncio: `await asyncio.wait_for(start conn.recv(100), 5)` cancels the recv when time runs out.
@@ -49,8 +49,8 @@
 !tomato_sock_addr_port(id: int, i: int) -> int
 !tomato_sock_addr_family(id: int, i: int) -> int
 !tomato_sock_udp_bind(id: int, i: int) -> int
-!tomato_sock_udp_send(fd: int, data: list[int], id: int) -> int
-!tomato_sock_udp_recv(fd: int, out: list[int], n: int) -> int
+!tomato_sock_udp_send(fd: int, data: bytes, id: int) -> int
+!tomato_sock_udp_recv(fd: int, out: list[bytes], n: int) -> int
 !tomato_sock_udp_host() -> str
 !tomato_sock_udp_port() -> int
 !tomato_sock_addr_count(id: int) -> int
@@ -59,12 +59,10 @@
 !tomato_sock_connected(fd: int) -> int
 !tomato_sock_bind(id: int, i: int, backlog: int) -> int
 !tomato_sock_accept(fd: int) -> int
-!tomato_sock_send(fd: int, data: list[int], start: int) -> int
+!tomato_sock_send(fd: int, data: bytes, start: int) -> int
 !tomato_sock_text_size(text: str) -> int
 !tomato_sock_send_text(fd: int, text: str, start: int) -> int
-!tomato_sock_recv(fd: int, out: list[int], n: int) -> int
-!tomato_sock_decode(data: list[int], start: int, stop: int) -> str
-!tomato_sock_find(data: list[int], start: int, byte: int) -> int
+!tomato_sock_recv(fd: int, out: list[bytes], n: int) -> int
 !tomato_sock_close(fd: int)
 !tomato_sock_port(fd: int) -> int
 !tomato_sock_peer_host(fd: int) -> str
@@ -115,7 +113,7 @@ export class Socket:
     fd: int = -1                 # the descriptor; -1 once closed
     peer_host: str = ''          # the address of the other side, as text ('127.0.0.1', '::1')
     peer_port: int = 0
-    private buffer: list[int] = []      # bytes received but not yet given out (recv_line reads ahead)
+    private buffer: bytes = b''         # bytes received but not yet given out (recv_line reads ahead)
     private busy: int = 0               # calls since this socket last let other tasks run (see _turns)
     private taken: int = 0              # how often bytes were taken out of it, by any task
 
@@ -125,8 +123,8 @@ export class Socket:
         self.peer_host = !tomato_sock_peer_host(fd)
         self.peer_port = !tomato_sock_peer_port(fd)
 
-    # send every byte of data (each an int from 0 to 255), waiting while the connection cannot take more
-    async def send(self, data: list[int]):
+    # send every byte of data, waiting while the connection cannot take more
+    async def send(self, data: bytes):
         if self.fd < 0:
             raise SocketError('the socket is closed', 'E445')
         done = 0
@@ -171,26 +169,33 @@ export class Socket:
         while True:
             if self.fd < 0:
                 raise SocketError('the socket is closed', 'E445')
-            got = !tomato_sock_recv(self.fd, self.buffer, n)
+            came: list[bytes] = []
+            got = !tomato_sock_recv(self.fd, came, n)
+            if got > 0:
+                self.buffer = came[0] if len(self.buffer) == 0 else self.buffer + came[0]
             if got >= 0:
                 return got > 0
             if not _would_block():
                 _fail('')
             await _fd_wait(self.fd, 1)
 
-    # up to n bytes, as soon as there are any; [] once the other side has closed the connection
-    async def recv(self, n: int = 4096) -> list[int]:
+    # up to n bytes, as soon as there are any; b'' once the other side has closed the connection
+    async def recv(self, n: int = 4096) -> bytes:
         if n <= 0:
-            return []
+            return b''
         self.busy += 1
         if self.busy >= _turns:
             self.busy = 0
             await sleep(0)
         while len(self.buffer) == 0:         # again when another task took what arrived
             if not await self._fill(n) and len(self.buffer) == 0:
-                return []
-        out = self.buffer[:n]
-        self.buffer = self.buffer[n:]
+                return b''
+        out = self.buffer
+        if len(out) > n:
+            out = self.buffer[:n]
+            self.buffer = self.buffer[n:]
+        else:
+            self.buffer = b''
         self.taken += 1
         return out
 
@@ -208,15 +213,15 @@ export class Socket:
             if taken != self.taken:          # another task took bytes: what was searched is gone
                 looked = 0
                 taken = self.taken
-            at = !tomato_sock_find(self.buffer, looked, 10)
+            at = self.buffer.find(b'\n', looked)
             if at >= 0:
-                line = !tomato_sock_decode(self.buffer, 0, at + 1)
+                line = self.buffer[:at + 1].decode(errors='replace')
                 self.buffer = self.buffer[at + 1:]
                 self.taken += 1
                 return line
             if ended:
-                line = !tomato_sock_decode(self.buffer, 0, len(self.buffer))
-                self.buffer = []
+                line = self.buffer.decode(errors='replace')
+                self.buffer = b''
                 self.taken += 1
                 return line
             looked = len(self.buffer)
@@ -311,7 +316,7 @@ export class DatagramSocket:
         self.host = host
         self.port = !tomato_sock_port(fd)
 
-    async def sendto(self, data: list[int], host: str, port: int):
+    async def sendto(self, data: bytes, host: str, port: int):
         if self.fd < 0:
             raise SocketError('the socket is closed', 'E445')
         r = await _resolve(host, port, 0, 1)
@@ -328,7 +333,7 @@ export class DatagramSocket:
             !tomato_sock_resolve_free(r)
 
     # One datagram, including an empty one. A too-small buffer discards it and raises SocketError.
-    async def recvfrom(self, n: int = 65535) -> tuple[list[int], str, int]:
+    async def recvfrom(self, n: int = 65535) -> tuple[bytes, str, int]:
         self.busy += 1
         if self.busy >= _turns:
             self.busy = 0
@@ -336,9 +341,9 @@ export class DatagramSocket:
         while True:
             if self.fd < 0:
                 raise SocketError('the socket is closed', 'E445')
-            data: list[int] = []
+            data: list[bytes] = []
             if !tomato_sock_udp_recv(self.fd, data, n) >= 0:
-                return (data, !tomato_sock_udp_host(), !tomato_sock_udp_port())
+                return (data[0], !tomato_sock_udp_host(), !tomato_sock_udp_port())
             if not _would_block():
                 _fail('')
             await _fd_wait(self.fd, 1)

@@ -3239,8 +3239,9 @@ static int http_cancel_frame(void *frame) {
 int64_t tomato_http_status(int64_t id) { HttpReq *r = http_get(id); return r ? r->status : 0; }
 int64_t tomato_http_error_kind(int64_t id) { HttpReq *r = http_get(id); return r ? r->kind : HK_OTHER; }
 void *tomato_http_error_text(int64_t id) { HttpReq *r = http_get(id); return tomato_str_from_cstr(r && r->kind && r->err ? r->err : ""); }
-int64_t tomato_http_body_len(int64_t id) { HttpReq *r = http_get(id); return r ? r->body_n : 0; }
-int64_t tomato_http_body_byte(int64_t id, int64_t i) { HttpReq *r = http_get(id); return (r && i >= 0 && i < r->body_n) ? (unsigned char)r->body[i] : 0; }
+static Str *bytes_new(const void *data, int64_t n);
+/* the body as bytes (D17e): Response.content */
+void *tomato_http_content(int64_t id) { HttpReq *r = http_get(id); return bytes_new(r ? r->body : NULL, r ? r->body_n : 0); }
 void *tomato_http_url(int64_t id) { HttpReq *r = http_get(id); return tomato_str_from_cstr(r && r->final_url ? r->final_url : ""); }
 void *tomato_http_headers(int64_t id) { HttpReq *r = http_get(id); return r && r->head ? str_new(r->head, r->head_n) : tomato_str_from_cstr(""); }
 
@@ -3744,6 +3745,271 @@ typedef struct { Hdr h; int64_t len; int64_t cap; char *data; } List;
  * slot is read at a byte offset, not by indexing a pointer array: on WebAssembly (32-bit pointers) the two differ. */
 #define LIST_SLOT(l, i, T) (*(T *)((l)->data + (int64_t)(i) * 8))
 
+/* ---- bytes (D17e): immutable, laid out exactly as a text is ({header, length, count, the bytes}, type code 1) with the count
+ * equal to the length. So concatenation, comparison, hashing, len() and dict and set keys are the text's own code, which works on
+ * the bytes alone. Everything that makes new bytes goes through bytes_new, which keeps the count equal to the length (str_new
+ * would count UTF-8 characters, and bytes above 127 are not characters). The compiler and std/builtin/bytes.tom call these. ---- */
+static int64_t int_mk_small(int64_t v);
+static Str *bytes_new(const void *data, int64_t n) {
+    Str *s = str_alloc(n);
+    if (n && data) memcpy(s->data, data, (size_t)n);
+    s->chars = n;
+    return s;
+}
+
+/* b[lo:hi:step] with Python's rules (slice_plan); NULL for a zero step */
+void *tomato_bytes_slice3(void *b, int64_t lo, int64_t hi, int64_t step, int flags) {
+    Str *s = b;
+    int64_t start, n = slice_plan(s->bytes, lo, hi, step, flags, &start);
+    if (n < 0) return NULL;
+    if (!(flags & 4)) step = 1;
+    if (step == 1) return bytes_new(s->data + start, n);
+    Str *r = bytes_new(NULL, n);
+    for (int64_t k = 0; k < n; k++) r->data[k] = s->data[start + k * step];
+    return r;
+}
+
+/* v in b: 1 or 0, and -1 when v is not a byte value (the compiled code raises ValueError, as Python does) */
+int32_t tomato_bytes_has_byte(void *b, int64_t v) {
+    Str *s = b;
+    if (v < 0 || v > 255) return -1;
+    return s->bytes > 0 && memchr(s->data, (int)v, (size_t)s->bytes) != NULL;
+}
+
+int32_t tomato_bytes_contains(void *b, void *sub) { return find_bytes(b, sub, 0) >= 0; }
+
+void *tomato_bytes_repeat(void *b, int64_t n) {
+    Str *s = b;
+    if (n <= 0 || s->bytes == 0) return bytes_new(NULL, 0);
+    if (n > (int64_t)1000000000 / s->bytes) out_of_memory();
+    Str *r = bytes_new(NULL, s->bytes * n);
+    for (int64_t k = 0; k < n; k++) memcpy(r->data + k * s->bytes, s->data, (size_t)s->bytes);
+    return r;
+}
+
+/* str(b) and print: b'...' as Python shows bytes. The quote is ' unless the bytes hold a ' and no ", printable ASCII is itself,
+ * a backslash and the quote are escaped, tab, newline and carriage return are \t \n \r, and every other byte is \xhh. */
+void *tomato_bytes_repr(void *b) {
+    Str *s = b;
+    int q = (memchr(s->data, '\'', (size_t)s->bytes) && !memchr(s->data, '"', (size_t)s->bytes)) ? '"' : '\'';
+    if (s->bytes > (int64_t)250000000) out_of_memory();
+    char *t = malloc((size_t)s->bytes * 4 + 4);
+    if (!t) out_of_memory();
+    static const char hexd[] = "0123456789abcdef";
+    int64_t n = 0;
+    t[n++] = 'b';
+    t[n++] = (char)q;
+    for (int64_t i = 0; i < s->bytes; i++) {
+        unsigned char c = (unsigned char)s->data[i];
+        if (c == '\\' || c == q) { t[n++] = '\\'; t[n++] = (char)c; }
+        else if (c == '\n') { t[n++] = '\\'; t[n++] = 'n'; }
+        else if (c == '\t') { t[n++] = '\\'; t[n++] = 't'; }
+        else if (c == '\r') { t[n++] = '\\'; t[n++] = 'r'; }
+        else if (c < 32 || c > 126) { t[n++] = '\\'; t[n++] = 'x'; t[n++] = hexd[c >> 4]; t[n++] = hexd[c & 15]; }
+        else t[n++] = (char)c;
+    }
+    t[n++] = (char)q;
+    Str *r = str_alloc(n);          /* all ASCII: as many characters as bytes */
+    memcpy(r->data, t, (size_t)n);
+    r->chars = n;
+    free(t);
+    return r;
+}
+
+/* find, rfind and count of sub in b[start:end] (mode 0, 1, 2), with Python's rules for the ends (negative counts from the end,
+ * clamped); find and rfind give the position or -1 */
+int64_t tomato_bytes_search(void *b, void *sub, int64_t start, int64_t end, int64_t mode) {
+    Str *h = b, *x = sub;
+    int64_t len = h->bytes;
+    if (start < 0) { start += len; if (start < 0) start = 0; }
+    if (end < 0) { end += len; if (end < 0) end = 0; }
+    if (end > len) end = len;
+    if (start > len || start > end) return mode == 2 ? 0 : -1;
+    int64_t span = end - start;
+    if (x->bytes > span) return mode == 2 ? 0 : -1;
+    if (mode == 2) {
+        if (x->bytes == 0) return span + 1;
+        int64_t k = 0;
+        for (int64_t i = start; i + x->bytes <= end;) {
+            if (memcmp(h->data + i, x->data, (size_t)x->bytes) == 0) { k++; i += x->bytes; } else i++;
+        }
+        return k;
+    }
+    if (mode == 1) {
+        for (int64_t i = end - x->bytes; i >= start; i--)
+            if (memcmp(h->data + i, x->data, (size_t)x->bytes) == 0) return i;
+        return -1;
+    }
+    for (int64_t i = start; i + x->bytes <= end; i++)
+        if (memcmp(h->data + i, x->data, (size_t)x->bytes) == 0) return i;
+    return -1;
+}
+
+int64_t tomato_bytes_starts(void *b, void *p, int64_t at_end) {
+    Str *s = b, *x = p;
+    if (x->bytes > s->bytes) return 0;
+    return memcmp(s->data + (at_end ? s->bytes - x->bytes : 0), x->data, (size_t)x->bytes) == 0;
+}
+
+/* sep.join(items) */
+void *tomato_bytes_join(void *sep, void *list) {
+    Str *x = sep;
+    List *l = list;
+    int64_t total = 0;
+    for (int64_t i = 0; i < l->len; i++) total += LIST_SLOT(l, i, Str *)->bytes + (i ? x->bytes : 0);
+    Str *r = bytes_new(NULL, total);
+    int64_t at = 0;
+    for (int64_t i = 0; i < l->len; i++) {
+        if (i) { memcpy(r->data + at, x->data, (size_t)x->bytes); at += x->bytes; }
+        Str *piece = LIST_SLOT(l, i, Str *);
+        memcpy(r->data + at, piece->data, (size_t)piece->bytes);
+        at += piece->bytes;
+    }
+    return r;
+}
+
+/* b.hex(): two lower-case digits for each byte */
+void *tomato_bytes_hex(void *b) {
+    Str *s = b;
+    static const char hexd[] = "0123456789abcdef";
+    if (s->bytes > (int64_t)500000000) out_of_memory();
+    Str *r = str_alloc(s->bytes * 2);
+    for (int64_t i = 0; i < s->bytes; i++) {
+        unsigned char c = (unsigned char)s->data[i];
+        r->data[2 * i] = hexd[c >> 4];
+        r->data[2 * i + 1] = hexd[c & 15];
+    }
+    r->chars = s->bytes * 2;
+    return r;
+}
+
+static int hex_value(unsigned char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+static int hex_space(unsigned char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+
+/* bytes.fromhex(text): pairs of hex digits, with ASCII whitespace allowed between the pairs (Python's rule). The problem is -1
+ * when the text is good, else the position (in characters) of the first character that is not a hex digit or that leaves a pair
+ * unfinished; tomato_bytes_fromhex is called only on a good text. */
+int64_t tomato_bytes_hex_problem(void *text) {
+    Str *s = text;
+    int64_t i = 0;
+    while (i < s->bytes) {
+        unsigned char c = (unsigned char)s->data[i];
+        if (hex_space(c)) { i++; continue; }
+        if (hex_value(c) < 0) return byte_to_char(s, i);
+        if (i + 1 >= s->bytes || hex_value((unsigned char)s->data[i + 1]) < 0) return byte_to_char(s, i + 1);
+        i += 2;
+    }
+    return -1;
+}
+
+void *tomato_bytes_fromhex(void *text) {
+    Str *s = text;
+    Str *r = bytes_new(NULL, s->bytes / 2);
+    int64_t n = 0;
+    for (int64_t i = 0; i + 1 < s->bytes;) {
+        unsigned char c = (unsigned char)s->data[i];
+        if (hex_space(c)) { i++; continue; }
+        r->data[n++] = (char)(hex_value(c) * 16 + hex_value((unsigned char)s->data[i + 1]));
+        i += 2;
+    }
+    r->bytes = n;
+    r->chars = n;
+    r->data[n] = 0;
+    return r;
+}
+
+/* bytes(n): n zero bytes (n >= 0, checked by the caller) */
+void *tomato_bytes_zeros(int64_t n) {
+    if (n > (int64_t)1000000000) out_of_memory();
+    Str *r = bytes_new(NULL, n);
+    memset(r->data, 0, (size_t)n);
+    return r;
+}
+
+/* bytes(items) for a list[int]: -1 when every item is from 0 to 255, else the position of the first that is not */
+int64_t tomato_bytes_list_problem(void *list) {
+    List *l = list;
+    for (int64_t i = 0; i < l->len; i++) {
+        int64_t w = LIST_SLOT(l, i, int64_t);
+        if (!(w & 1) || (w >> 1) < 0 || (w >> 1) > 255) return i;     /* a big number (not tagged) is never a byte */
+    }
+    return -1;
+}
+
+void *tomato_bytes_of_list(void *list) {
+    List *l = list;
+    Str *r = bytes_new(NULL, l->len);
+    for (int64_t i = 0; i < l->len; i++) r->data[i] = (char)(LIST_SLOT(l, i, int64_t) >> 1);
+    return r;
+}
+
+/* list(b): the byte values are pushed onto the empty list[int] the caller made */
+void tomato_bytes_into_list(void *b, void *list) {
+    Str *s = b;
+    for (int64_t i = 0; i < s->bytes; i++) *(int64_t *)tomato_list_push(list, 8) = int_mk_small((unsigned char)s->data[i]);
+}
+
+/* s.encode(): the UTF-8 bytes of a text (any bytes it holds that are not UTF-8, from a file, are kept as they are) */
+void *tomato_str_encode(void *text) { Str *s = text; return bytes_new(s->data, s->bytes); }
+
+/* The length of the well-formed UTF-8 sequence at s[i] (1 to 4), or -k when it is not one, where k is the length of its maximal
+ * prefix that could start one (at least 1): the unit Python's 'replace' turns into one U+FFFD. */
+static int utf8_seq(const unsigned char *s, int64_t i, int64_t n) {
+    unsigned char b = s[i];
+    if (b < 0x80) return 1;
+    int count;
+    if (b >= 0xC2 && b <= 0xDF) count = 2;
+    else if (b >= 0xE0 && b <= 0xEF) count = 3;
+    else if (b >= 0xF0 && b <= 0xF4) count = 4;
+    else return -1;
+    int used = 1;
+    while (used < count && i + used < n) {
+        unsigned char c = s[i + used];
+        if (c < 0x80 || c > 0xBF) break;
+        if (used == 1 && ((b == 0xE0 && c < 0xA0) || (b == 0xED && c > 0x9F) || (b == 0xF0 && c < 0x90) || (b == 0xF4 && c > 0x8F))) break;
+        used++;
+    }
+    return used == count ? count : -used;
+}
+
+/* -1 when the bytes are well-formed UTF-8 (ascii: all below 128), else the position of the first byte that is not */
+int64_t tomato_bytes_decode_problem(void *b, int64_t ascii) {
+    Str *s = b;
+    const unsigned char *d = (const unsigned char *)s->data;
+    for (int64_t i = 0; i < s->bytes;) {
+        if (ascii) { if (d[i] > 127) return i; i++; continue; }
+        int k = utf8_seq(d, i, s->bytes);
+        if (k < 0) return i;
+        i += k;
+    }
+    return -1;
+}
+
+/* b.decode(): the text of the bytes. With replace, each maximal invalid sequence (ascii: each byte above 127) becomes U+FFFD, as
+ * Python's errors='replace' does; without it the caller has checked that there is none. */
+void *tomato_bytes_decode(void *b, int64_t ascii, int64_t replace) {
+    Str *s = b;
+    const unsigned char *d = (const unsigned char *)s->data;
+    if (!replace || tomato_bytes_decode_problem(b, ascii) < 0) return str_new(s->data, s->bytes);
+    if (s->bytes > (int64_t)300000000) out_of_memory();
+    char *out = malloc((size_t)s->bytes * 3 + 1);
+    if (!out) out_of_memory();
+    int64_t n = 0;
+    for (int64_t i = 0; i < s->bytes;) {
+        int k = ascii ? (d[i] < 128 ? 1 : -1) : utf8_seq(d, i, s->bytes);
+        if (k > 0) { memcpy(out + n, d + i, (size_t)k); n += k; i += k; }
+        else { out[n++] = (char)0xEF; out[n++] = (char)0xBF; out[n++] = (char)0xBD; i += -k; }
+    }
+    void *r = str_new(out, n);
+    free(out);
+    return r;
+}
+
 void *tomato_list_new(int64_t type) { return tomato_alloc((int64_t)sizeof(List), type); }
 
 /* Makes room for one more element and returns the address of its slot; the caller stores the element. */
@@ -3800,41 +4066,6 @@ int64_t tomato_sock_err_kind(void) { return sk_kind; }
 void *tomato_sock_err_text(void) { return tomato_str_from_cstr(sk_text); }
 
 int64_t tomato_sock_text_size(void *text) { return ((Str *)text)->bytes; }
-
-/* the bytes of list[int] items from..to-1, or NULL when one is not 0-255 */
-static unsigned char *sock_bytes(List *l, int64_t from, int64_t to) {
-    unsigned char *b = malloc((size_t)(to - from) + 1);
-    if (!b) out_of_memory();
-    for (int64_t k = from; k < to; k++) {
-        int64_t w = LIST_SLOT(l, k, int64_t);
-        int64_t v = w == 0 ? 0 : (w & 1) ? (w >> 1) : -1;
-        if (v < 0 || v > 255) { free(b); return NULL; }
-        b[k - from] = (unsigned char)v;
-    }
-    return b;
-}
-
-/* bytes from..to-1 of a list[int] as text (bad UTF-8 becomes U+FFFD); the library decodes received lines with it */
-void *tomato_sock_decode(void *list, int64_t from, int64_t to) {
-    List *l = list;
-    if (from < 0) from = 0;
-    if (to > l->len) to = l->len;
-    if (to <= from) return tomato_str_from_cstr("");
-    unsigned char *b = malloc((size_t)(to - from) + 1);
-    if (!b) out_of_memory();
-    for (int64_t k = from; k < to; k++) { int64_t w = LIST_SLOT(l, k, int64_t); b[k - from] = (w & 1) ? (unsigned char)(w >> 1) : 0; }
-    void *r = utf8_lossy(b, to - from);
-    free(b);
-    return r;
-}
-
-/* the first item at or after from that equals byte, or -1 */
-int64_t tomato_sock_find(void *list, int64_t from, int64_t byte) {
-    List *l = list;
-    int64_t want = int_mk_small(byte);
-    for (int64_t k = from < 0 ? 0 : from; k < l->len; k++) if (LIST_SLOT(l, k, int64_t) == want) return k;
-    return -1;
-}
 
 #if defined(TOMATO_WASM) || defined(__wasi__)
 static int64_t sk_browser(void) { return sk_fail(SK_BROWSER, "sockets are not available in the browser playground (it has no network access from here); run the program with 'tomato run'"); }
@@ -4005,14 +4236,13 @@ int64_t tomato_sock_udp_bind(int64_t id, int64_t i) {
 int64_t tomato_sock_udp_send(int64_t fd, void *data, int64_t id) {
     struct sockaddr_storage local; socklen_t n = sizeof local;
     if (getsockname((int)fd, (struct sockaddr *)&local, &n)) return sk_errno(errno, "could not inspect socket");
-    List *l = data; unsigned char *bytes = sock_bytes(l, 0, l->len);
-    if (!bytes) return sk_fail(SK_OTHER, "a byte must be an int from 0 to 255");
+    Str *d = data;     /* bytes (D17e) */
     int compatible = 0, error = 0;
     for (struct addrinfo *a = sk_addr(id, 0); a; a = a->ai_next) if (a->ai_family == local.ss_family) {
-        compatible = 1; ssize_t sent = sendto((int)fd, bytes, (size_t)l->len, MSG_NOSIGNAL, a->ai_addr, a->ai_addrlen);
-        if (sent >= 0) { free(bytes); return 0; } error = errno; if (error == EAGAIN || error == EWOULDBLOCK || error == EINTR) break;
+        compatible = 1; ssize_t sent = sendto((int)fd, d->data, (size_t)d->bytes, MSG_NOSIGNAL, a->ai_addr, a->ai_addrlen);
+        if (sent >= 0) return 0; error = errno; if (error == EAGAIN || error == EWOULDBLOCK || error == EINTR) break;
     }
-    free(bytes); if (!compatible) return sk_fail(SK_ADDRESS, "no address matches the socket family"); return sk_errno(error, "could not send datagram");
+    if (!compatible) return sk_fail(SK_ADDRESS, "no address matches the socket family"); return sk_errno(error, "could not send datagram");
 }
 static char sk_datagram_host[NI_MAXHOST]; static int sk_datagram_port;
 int64_t tomato_sock_udp_recv(int64_t fd, void *out, int64_t n) {
@@ -4024,9 +4254,8 @@ int64_t tomato_sock_udp_recv(int64_t fd, void *out, int64_t n) {
     if (r < 0) { int e = errno; free(b); return sk_errno(e, "could not receive datagram"); }
     if (msg.msg_flags & MSG_TRUNC) { free(b); return sk_fail(SK_OTHER, "datagram is larger than the receive buffer"); }
     if (!sk_addr_name((struct sockaddr *)&peer, msg.msg_namelen, sk_datagram_host, sizeof sk_datagram_host, &sk_datagram_port)) { free(b); return sk_fail(SK_ADDRESS, "could not read datagram address"); }
-    List *l = out; if (r) { l->data = realloc(l->data, (size_t)r * 8); if (!l->data) out_of_memory(); l->cap = r; }
-    for (ssize_t k = 0; k < r; k++) LIST_SLOT(l, k, int64_t) = int_mk_small(b[k]);
-    l->len = r; free(b); return r;
+    *(void **)tomato_list_push(out, 8) = bytes_new(b, r);     /* the datagram, as bytes, onto the list[bytes] out */
+    free(b); return r;
 }
 void *tomato_sock_udp_host(void) { return tomato_str_from_cstr(sk_datagram_host); }
 int64_t tomato_sock_udp_port(void) { return sk_datagram_port; }
@@ -4050,16 +4279,11 @@ static int64_t sk_send(int64_t fd, const unsigned char *b, int64_t n) {
     if (r < 0) return sk_errno(errno, "could not send");
     return r;
 }
-/* send items from.. of a list[int]: how many bytes went, or -1 */
+/* send the bytes from.. of a bytes value (D17e): how many went, or -1 */
 int64_t tomato_sock_send(int64_t fd, void *data, int64_t from) {
-    List *l = data;
-    if (from >= l->len) return 0;
-    int64_t to = l->len - from > 262144 ? from + 262144 : l->len;     /* a piece at a time: a big list is not converted again per call */
-    unsigned char *b = sock_bytes(l, from, to);
-    if (!b) return sk_fail(SK_OTHER, "a byte must be an int from 0 to 255");
-    int64_t r = sk_send(fd, b, to - from);
-    free(b);
-    return r;
+    Str *d = data;
+    if (from >= d->bytes) return 0;
+    return sk_send(fd, (const unsigned char *)d->data + from, d->bytes - from);
 }
 /* send the UTF-8 bytes from.. of a text */
 int64_t tomato_sock_send_text(int64_t fd, void *text, int64_t from) {
@@ -4068,7 +4292,8 @@ int64_t tomato_sock_send_text(int64_t fd, void *text, int64_t from) {
     return sk_send(fd, (const unsigned char *)t->data + from, t->bytes - from);
 }
 
-/* receive up to n bytes onto the end of out: how many (0 when the other side closed), or -1 */
+/* receive up to n bytes: how many (0 when the other side closed), or -1; when some came they are pushed onto the list[bytes] out
+ * as one bytes value (D17e) */
 int64_t tomato_sock_recv(int64_t fd, void *out, int64_t n) {
     if (n <= 0) return 0;
     if (n > 1 << 20) n = 1 << 20;
@@ -4076,14 +4301,7 @@ int64_t tomato_sock_recv(int64_t fd, void *out, int64_t n) {
     if (!b) out_of_memory();
     ssize_t r = recv((int)fd, b, (size_t)n, 0);
     if (r < 0) { int e = errno; free(b); return sk_errno(e, "could not receive"); }
-    List *l = out;
-    if (l->len + r > l->cap) {
-        l->cap = l->len + r;
-        l->data = realloc(l->data, (size_t)(l->cap * 8));
-        if (!l->data) out_of_memory();
-    }
-    for (ssize_t k = 0; k < r; k++) LIST_SLOT(l, l->len + k, int64_t) = int_mk_small(b[k]);
-    l->len += r;
+    if (r > 0) *(void **)tomato_list_push(out, 8) = bytes_new(b, r);
     free(b);
     return r;
 }
@@ -5104,6 +5322,7 @@ double tomato_mod_f64(double x, double y) {
 double tomato_pow_f64(double x, double y) { return pow(x, y); }
 
 /* A union's box: {header, payload at byte 16, kind at byte 24}. This is the text print and str() show for it. */
+void *tomato_bytes_repr(void *b);
 void *tomato_int_str(int64_t x);
 void *tomato_bf_str(int64_t x);
 void *tomato_box_str(void *b) {
@@ -5114,6 +5333,7 @@ void *tomato_box_str(void *b) {
     case 4: tomato_retain((void *)w[2]); return (void *)w[2];
     case 5: return tomato_str_from_bool((int)w[2]);
     case 7: return tomato_bf_str(w[2]);
+    case 8: return tomato_bytes_repr((void *)w[2]);     /* bytes: b'...' (D17e) */
     default: return tomato_str_from_cstr("<object>");
     }
 }
@@ -7771,35 +7991,16 @@ static int mvalue(JScan *j, int64_t *ip, int depth) {
 }
 
 /* the bytes of a list of ints, or NULL when an item is not 0..255 (bad = its index) */
-static unsigned char *mbytes(void *list, int64_t *bad) {
-    List *l = list;
-    unsigned char *buf = malloc((size_t)l->len + 1);
-    if (!buf) out_of_memory();
-    for (int64_t k = 0; k < l->len; k++) {
-        int64_t w = LIST_SLOT(l, k, int64_t);
-        int64_t v = w == 0 ? 0 : (w & 1) ? (w >> 1) : -1;
-        if (v < 0 || v > 255) { *bad = k; free(buf); return NULL; }
-        buf[k] = (unsigned char)v;
-    }
-    return buf;
-}
-
 int64_t tomato_msgpack_scan(void *data, void *tape, void *strs, void *nums) {
-    int64_t bad = 0;
-    unsigned char *buf = mbytes(data, &bad);
-    JScan j = { (const char *)buf, ((List *)data)->len, tape, strs, nums, NULL, 0 };
-    int ok;
+    Str *d = data;      /* bytes (D17e) */
+    JScan j = { d->data, d->bytes, tape, strs, nums, NULL, 0 };
     int64_t at = 0;
-    if (!buf) { j.s = ""; j.n = 0; ok = jerr(&j, bad, "A byte must be an int from 0 to 255"); }
-    else {
-        ok = mvalue(&j, &at, 0);
-        if (ok && at != j.n) ok = jerr(&j, at, "Extra data");
-    }
+    int ok = mvalue(&j, &at, 0);
+    if (ok && at != j.n) ok = jerr(&j, at, "Extra data");
     if (!ok) {
         jtape(&j, j.at);
         jstr_push(&j, j.msg, (int64_t)strlen(j.msg));
     }
-    free(buf);
     return ok ? 0 : 1;
 }
 
@@ -7850,10 +8051,8 @@ void tomato_mp_i64(void *out, int64_t v) {
 void tomato_mp_u64(void *out, int64_t hi, int64_t lo) { mput(out, 0xcf); mput_be(out, ((uint64_t)hi << 32) | (uint64_t)lo, 8); }
 /* a bin (isext 0) or an ext with type `code` (isext 1) holding the bytes of data; returns 1 when an item of data is not a byte */
 int64_t tomato_mp_blob(void *out, int64_t code, int64_t isext, void *data) {
-    int64_t bad;
-    unsigned char *b = mbytes(data, &bad);
-    if (!b) return 1;
-    int64_t n = ((List *)data)->len;
+    const unsigned char *b = (const unsigned char *)((Str *)data)->data;     /* bytes (D17e) */
+    int64_t n = ((Str *)data)->bytes;
     if (!isext) tomato_mp_head(out, 2, n);
     else {
         if (n == 1 || n == 2 || n == 4 || n == 8 || n == 16) mput(out, 0xd4 + (n == 1 ? 0 : n == 2 ? 1 : n == 4 ? 2 : n == 8 ? 3 : 4));
@@ -7863,7 +8062,6 @@ int64_t tomato_mp_blob(void *out, int64_t code, int64_t isext, void *data) {
         mput(out, code);
     }
     for (int64_t k = 0; k < n; k++) mput(out, b[k]);
-    free(b);
     return 0;
 }
 /* a timestamp in the shortest of the three formats */
@@ -7873,48 +8071,44 @@ void tomato_mp_ts(void *out, int64_t secs, int64_t nanos) {
     else { mput(out, 0xc7); mput(out, 12); mput(out, 0xff); mput_be(out, (uint64_t)nanos, 4); mput_be(out, (uint64_t)secs, 8); }
 }
 
-/* ---- whole files as bytes, for load_msgpack and dump_msgpack in std/json.tom (open() is text only). Both return 0,
- * or a code for tomato_file_error: 1 the file cannot be opened, 2 it cannot be read (a directory, say), 3 it cannot be
- * written (the disk is full, say), 4 an item of data is not an int from 0 to 255. The reason is kept like open()'s. */
+/* ---- whole files as bytes (D17e), for os.read_bytes and os.write_bytes, load_msgpack and dump_msgpack in std/json.tom and
+ * sys (open() is text only). Both return 0, or a code for tomato_file_error: 1 the file cannot be opened, 2 it cannot be read
+ * (a directory, say), 3 it cannot be written (the disk is full, say). The reason is kept like open()'s. */
 int64_t tomato_file_read_bytes(void *path, void *out) {
     FILE *f = fopen(((Str *)path)->data, "rb");
     if (!f) { open_errno = errno; return 1; }
-    List *l = out;
-    unsigned char buf[4096];
-    size_t got;
+    char *buf = NULL;
+    size_t n = 0, cap = 0, got;
     errno = 0;
-    while ((got = fread(buf, 1, sizeof buf, f)) > 0) {
-        if (l->len + (int64_t)got > l->cap) {
-            int64_t cap = l->cap ? l->cap : 4096;
-            while (cap < l->len + (int64_t)got) cap *= 2;
-            l->data = realloc(l->data, (size_t)(cap * 8));
-            if (!l->data) out_of_memory();
-            l->cap = cap;
+    for (;;) {
+        if (n + 65536 > cap) {
+            cap = cap ? cap * 2 : 65536;
+            buf = realloc(buf, cap);
+            if (!buf) out_of_memory();
         }
-        for (size_t k = 0; k < got; k++) LIST_SLOT(l, l->len + (int64_t)k, int64_t) = int_mk_small(buf[k]);
-        l->len += (int64_t)got;
+        got = fread(buf + n, 1, cap - n, f);
+        if (got == 0) break;
+        n += got;
     }
     int failed = ferror(f), why = errno;
     fclose(f);
-    if (failed) { open_errno = why ? why : EIO; return 2; }
+    if (failed) { free(buf); open_errno = why ? why : EIO; return 2; }
+    *(void **)tomato_list_push(out, 8) = bytes_new(buf, (int64_t)n);     /* the whole file as one bytes value (D17e) onto the list[bytes] out */
+    free(buf);
     return 0;
 }
 
-/* Writes data to the file at path, replacing it (or after its end when append is not 0). A list that is not all bytes is
- * refused before the file is opened. */
+/* Writes the bytes data (D17e) to the file at path, replacing it (or after its end when append is not 0). */
 int64_t tomato_file_write_bytes_mode(void *path, void *data, int64_t append) {
-    int64_t bad = 0;
-    unsigned char *b = mbytes(data, &bad);
-    if (!b) return 4;
+    Str *d = data;
     FILE *f = fopen(((Str *)path)->data, append ? "ab" : "wb");
-    if (!f) { open_errno = errno; free(b); return 1; }
-    size_t n = (size_t)((List *)data)->len;
+    if (!f) { open_errno = errno; return 1; }
+    size_t n = (size_t)d->bytes;
     int why = 0;
     errno = 0;
-    if (fwrite(b, 1, n, f) != n) why = errno ? errno : EIO;
+    if (n && fwrite(d->data, 1, n, f) != n) why = errno ? errno : EIO;
     errno = 0;
     if (fclose(f) != 0 && !why) why = errno ? errno : EIO;
-    free(b);
     if (why) { open_errno = why; return 3; }
     return 0;
 }
@@ -7923,7 +8117,6 @@ int64_t tomato_file_write_bytes(void *path, void *data) { return tomato_file_wri
 /* the message of the IOError for a code above: which path failed, at which step, and why */
 void *tomato_file_error(void *path, int64_t code) {
     Str *p = path;
-    if (code == 4) return str_new("a byte must be an int from 0 to 255", 35);
     const char *verb = code == 2 ? "read" : code == 3 ? "write" : "open";
     const char *why = open_errno ? strerror(open_errno) : "unknown error";
     size_t n = (size_t)p->bytes + strlen(why) + 32;

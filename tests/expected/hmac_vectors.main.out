@@ -9,6 +9,4 @@ True True
 True True False False
 iterations ValueError
 length ValueError
-key ValueError
-message ValueError
 algorithm ValueError

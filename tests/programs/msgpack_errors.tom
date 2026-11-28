@@ -2,21 +2,10 @@
 from json import loads_msgpack, dumps_msgpack, dumps, MsgpackError, JSONEncodeError
 from value import Value, Int, Ext, Bin, Timestamp, List, Dict
 
-def nib(c: str) -> int:
-    n = ord(c)
-    if n >= 97:
-        return n - 87
-    return n - 48
-
-def unhex(s: str) -> list[int]:
-    out: list[int] = []
-    for i in range(len(s) // 2):
-        out.append(nib(s[2 * i]) * 16 + nib(s[2 * i + 1]))
-    return out
-
 def bad(h: str):
     try:
-        print('ACCEPTED', h, dumps(loads_msgpack(unhex(h))))
+        # an odd last digit is dropped (a3616 is a36162's first two bytes), as the old helper did
+        print('ACCEPTED', h, dumps(loads_msgpack(bytes.fromhex(h[0:len(h) // 2 * 2]))))
     catch MsgpackError as e:
         print(h[0:20], e.message, e.pos)
 
@@ -65,17 +54,15 @@ def main():
     d = ''
     for i in range(512):
         d += '91'
-    print(len(dumps(loads_msgpack(unhex(d + 'c0')))))
+    print(len(dumps(loads_msgpack(bytes.fromhex(d + 'c0')))))
     bad('91' + d + 'c0')
     print('-- encoding')
     cannot(Int(18446744073709551616))
     cannot(Int(-9223372036854775809))
     cannot(Int(10 ** 40))
-    cannot(Ext(-1, [1]))
-    cannot(Ext(128, [1]))
-    cannot(Ext(-129, [1]))
-    cannot(Ext(1, [256]))
-    cannot(Bin([1, -1]))
+    cannot(Ext(-1, bytes([1])))
+    cannot(Ext(128, bytes([1])))
+    cannot(Ext(-129, bytes([1])))
     cannot(Timestamp(1, 1000000000))
     cannot(Timestamp(1, -1))
     cannot(Timestamp(4611686018427387904))
@@ -85,21 +72,14 @@ def main():
     print(len(dumps_msgpack(deep)))
     cannot(List([deep]))
     cannot(Dict({'a': List([deep])}))
-    print('-- bytes that are not bytes')
-    try:
-        loads_msgpack([1, 2, 300])
-    catch MsgpackError as e:
-        print(e.message, e.pos)
-    try:
-        loads_msgpack([0 - 1])
-    catch MsgpackError as e:
-        print(e.message, e.pos)
-    try:
-        loads_msgpack([10 ** 30])
-    catch MsgpackError as e:
-        print(e.message, e.pos)
+    print('-- bytes that are not bytes: bytes() refuses them before MessagePack is involved')
+    for bad_list in [[1, 2, 300], [0 - 1], [10 ** 30], [1, 256], [1, 0 - 1]]:
+        try:
+            loads_msgpack(bytes(bad_list))
+        catch ValueError as e:
+            print(e.id, e.message)
     print('-- JSON text cannot hold these')
-    items: list[Value] = [Bin([1]), Ext(3, [1]), Timestamp(5)]
+    items: list[Value] = [Bin(b'\x01'), Ext(3, b'\x01'), Timestamp(5)]
     for j in items:
         try:
             print(dumps(j))

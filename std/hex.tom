@@ -1,24 +1,18 @@
-# Hexadecimal text for binary data, as Python's `bytes.hex()` and `bytes.fromhex()` (`import hex`). Binary data is a
-# `list[int]` of byte values 0-255 until the language has a bytes type:
+# Hexadecimal text for binary data, as Python's `bytes.hex()` and `bytes.fromhex()` (`import hex`). Binary data is
+# `bytes`:
 #
-#     print(hex.encode([222, 173, 190, 239]))        # deadbeef
-#     print(hex.decode('DEADbeef'))                  # [222, 173, 190, 239]
+#     print(hex.encode(b'\xde\xad\xbe\xef'))      # deadbeef
+#     print(hex.decode('DEADbeef'))                  # b'\xde\xad\xbe\xef'
 #
-#   encode(data) -> str                 two lower-case digits per byte
-#   decode(text) -> list[int]           two digits (either case) per byte
+#   encode(data: bytes) -> str          two lower-case digits per byte
+#   decode(text: str) -> bytes          two digits (either case) per byte
 #
-# Encoding a number outside 0-255 is a ValueError. Decoding is strict, as Python's `binascii.unhexlify` is: an odd
-# number of digits or any character that is not 0-9, a-f or A-F (spaces included) is a ValueError.
+# Decoding is strict, as Python's `binascii.unhexlify` is, and unlike `bytes.fromhex`: an odd number of digits or any
+# character that is not 0-9, a-f or A-F (spaces included) is a ValueError.
 
 # Lower-case hex digits of the bytes.
-export def encode(data: list[int]) -> str:
-    digits = '0123456789abcdef'
-    parts: list[str] = []
-    for b in data:
-        if b < 0 or b > 255:
-            raise ValueError(f'a byte must be a whole number from 0 to 255, but got {b}', 'E391')
-        parts.append(digits[b // 16] + digits[b % 16])
-    return ''.join(parts)
+export def encode(data: bytes) -> str:
+    return data.hex()
 
 def _digit(c: str) -> int:
     n = ord(c)
@@ -31,10 +25,10 @@ def _digit(c: str) -> int:
     raise ValueError(f"a hex text holds only the digits 0-9 and a-f, but got '{c}'", 'E395')
 
 # The bytes of a hex text.
-export def decode(text: str) -> list[int]:
+export def decode(text: str) -> bytes:
     if len(text) % 2 != 0:
         raise ValueError(f'a hex text needs an even number of digits, but got {len(text)}', 'E394')
     out: list[int] = []
     for i in range(0, len(text), 2):
         out.append(_digit(text[i]) * 16 + _digit(text[i + 1]))
-    return out
+    return bytes(out)

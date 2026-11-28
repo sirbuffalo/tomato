@@ -1,0 +1,4 @@
+# 'in' with bytes takes an int or bytes on its left (D17e)
+@main
+def main():
+    print('a' in b'abc')

@@ -7,7 +7,7 @@ q=a+b&n=1%262
 &lt;a href=&quot;x&quot;&gt;Tom &amp; Jerry&lt;/a&gt;
 &lt;a href="x"&gt;
 <b> & © é 😀
-aGVsbG8= [104, 101, 108, 108, 111]
--_-- [251, 255, 190]
-deadbeef [222, 173, 190, 239]
+aGVsbG8= b'hello'
+-_-- b'\xfb\xff\xbe'
+deadbeef b'\xde\xad\xbe\xef'
 True True

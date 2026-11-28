@@ -1,38 +1,29 @@
 import hashlib
 import hmac
 import hex
-import utf8
 @main
 def main():
-    print(hmac.hexdigest([11] * 20, utf8.encode('Hi There'), 'sha256'))
-    print(hmac.hexdigest([11] * 20, utf8.encode('Hi There'), 'sha224'))
-    print(hmac.hexdigest([11] * 20, utf8.encode('Hi There'), 'sha1'))
-    print(hmac.hexdigest([11] * 16, utf8.encode('Hi There'), 'md5'))
-    print(hmac.hexdigest([170] * 131, utf8.encode('Test Using Larger Than Block-Size Key - Hash Key First'), 'sha256'))
-    print(hex.encode(hashlib.pbkdf2_hmac('sha1', utf8.encode('password'), utf8.encode('salt'), 2, 20)))
-    print(hex.encode(hashlib.pbkdf2_hmac('sha256', utf8.encode('password'), utf8.encode('salt'), 2, 32)))
-    h = hmac.HMAC([1, 2], 'sha256')
-    h.update([3])
+    print(hmac.hexdigest(b'\x0b' * 20, b'Hi There', 'sha256'))
+    print(hmac.hexdigest(b'\x0b' * 20, b'Hi There', 'sha224'))
+    print(hmac.hexdigest(b'\x0b' * 20, b'Hi There', 'sha1'))
+    print(hmac.hexdigest(b'\x0b' * 16, b'Hi There', 'md5'))
+    print(hmac.hexdigest(b'\xaa' * 131, b'Test Using Larger Than Block-Size Key - Hash Key First', 'sha256'))
+    print(hex.encode(hashlib.pbkdf2_hmac('sha1', b'password', b'salt', 2, 20)))
+    print(hex.encode(hashlib.pbkdf2_hmac('sha256', b'password', b'salt', 2, 32)))
+    h = hmac.HMAC(b'\x01\x02', 'sha256')
+    h.update(b'\x03')
     c = h.copy()
     print(h.digest() == h.digest(), h.digest() == c.digest())
-    h.update([4])
-    print(h.digest() != c.digest(), hmac.compare_digest([1, 2], [1, 2]), hmac.compare_digest([1, 2], [1, 3]), hmac.compare_digest([1], [1, 0]))
+    h.update(b'\x04')
+    print(h.digest() != c.digest(), hmac.compare_digest(b'\x01\x02', b'\x01\x02'), hmac.compare_digest(b'\x01\x02', b'\x01\x03'), hmac.compare_digest(b'\x01', b'\x01\x00'))
     try:
-        hashlib.pbkdf2_hmac('sha256', [], [], 0)
+        hashlib.pbkdf2_hmac('sha256', b'', b'', 0)
     catch ValueError:
         print('iterations ValueError')
     try:
-        hashlib.pbkdf2_hmac('sha256', [], [], 1, -1)
+        hashlib.pbkdf2_hmac('sha256', b'', b'', 1, -1)
     catch ValueError:
         print('length ValueError')
-    try:
-        hmac.digest([256], [], 'sha256')
-    catch ValueError:
-        print('key ValueError')
-    try:
-        hmac.digest([], [-1], 'sha256')
-    catch ValueError:
-        print('message ValueError')
     try:
         hashlib.new('not-a-hash')
     catch ValueError:

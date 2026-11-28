@@ -203,9 +203,9 @@ export class KeyDecoder:
     private paste: list[int] = []
 
     # the keys that the bytes complete (the bytes of the rest stay inside)
-    def feed(self, data: list[int]) -> list[Key]:
+    def feed(self, data: bytes) -> list[Key]:
         for b in data:
-            self.buf.append(b & 255)
+            self.buf.append(b)
         return self._drain(False)
 
     # True when bytes of an unfinished sequence are waiting: the caller waits a moment (about 100 ms) for the rest, then calls flush.
@@ -872,7 +872,7 @@ export class Terminal:
             data: list[int] = []
             got = !tomato_tty_read(self.fd, data, 4096, wait)
             if got > 0:
-                self.queue.extend(self.decoder.feed(data))
+                self.queue.extend(self.decoder.feed(bytes(data)))
                 self.since = -1.0
                 self.paste_since = -1.0
             elif got == 0:

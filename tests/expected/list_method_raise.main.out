@@ -1,0 +1,5 @@
+extend: boom list
+pop: boom
+insert: boom
+append: boom
+[1, 2]

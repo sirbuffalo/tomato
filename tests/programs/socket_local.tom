@@ -68,7 +68,7 @@ async def main():
     await a.send_text('ld\n')
     print((await a.recv_line())[:-1])
     print((await a.recv_line())[:-1])               # 'wor' and 'ld' came in two sends: one line
-    await a.send([104, 105, 10])                   # 'hi\n' as bytes
+    await a.send(b'hi\n')
     print(await a.recv(100))
     await a.send_text('café\n')
     print((await a.recv_line())[:-1])
@@ -85,7 +85,7 @@ async def main():
             if empty == 'text':
                 await a.send_text('')
             else:
-                await a.send([])
+                await a.send(b'')
             print('wrong: sent on a closed socket')
         catch socket.SocketError:
             print('closed, even for empty', empty)
@@ -96,7 +96,7 @@ async def main():
     # a megabyte in one send: it goes out in pieces while the reader takes them
     t = start sink(server)
     c = await socket.connect('127.0.0.1', server.port)
-    data: list[int] = [i % 256 for i in range(1048576)]
+    data = bytes([i % 256 for i in range(1048576)])
     await c.send(data)
     c.close()
     print('received', await t, 'bytes')
@@ -111,8 +111,8 @@ async def main():
     bye.set()
     print('then:', await d.recv(10))
     try:
-        await d.send([1, 256])
-    catch socket.SocketError as e:
+        await d.send(bytes([1, 256]))
+    catch ValueError as e:
         print(e.message)
     d.close()
     await q
@@ -123,7 +123,7 @@ async def main():
     print('peer closed, recv gives', await x.recv(10))
     try:
         for i in range(100):
-            await x.send([0] * 65536)
+            await x.send(bytes(65536))
         print('wrong: every send went through')
     catch socket.ConnectionResetError:
         print('write after close: ConnectionResetError')

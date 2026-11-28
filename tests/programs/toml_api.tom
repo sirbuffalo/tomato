@@ -83,7 +83,7 @@ def main(dir: str = '/tmp'):
     catch ValueError as e:
         print(e.message)
     # a value TOML has no way to write
-    for bad in [Dict({'a': Null()}), Dict({'a': List([Bin([1])])}), Dict({'a': Timestamp(1)})]:
+    for bad in [Dict({'a': Null()}), Dict({'a': List([Bin(b'\x01')])}), Dict({'a': Timestamp(1)})]:
         try:
             dumps(bad)
         catch ValueError as e:

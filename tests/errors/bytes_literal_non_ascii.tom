@@ -1,0 +1,4 @@
+# a bytes literal holds ASCII characters only; other bytes are written \xHH (D17e)
+@main
+def main():
+    print(b'café')

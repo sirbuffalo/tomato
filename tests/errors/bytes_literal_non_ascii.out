@@ -1,0 +1,6 @@
+error[E640]: a bytes literal holds only ASCII characters, and 'é' is not one
+ --> tests/errors/bytes_literal_non_ascii.tom:4:16
+  |
+4 |     print(b'café')
+  |                ^
+  = help: write its bytes as \xHH escapes, or write a text and encode it: 'é'.encode()

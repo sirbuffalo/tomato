@@ -4,7 +4,7 @@
 #
 # `lex` makes the tokens the parser reads and raises LexError at the first problem. `lex_spans` (D90a) is its tolerant mode for the repl's
 # colors: it never raises and keeps every character, comments and spaces too, in a span. They share the scanners (scan_number,
-# scan_string, scan_fstring, name_end, op_len), so they agree on where a piece of text ends; tests/lexer_spans.tom lexes every file of
+# scan_string, scan_bytes, scan_fstring, name_end, op_len), so they agree on where a piece of text ends; tests/lexer_spans.tom lexes every file of
 # the repository both ways. The lexer is not a std module: its token set is not a public promise.
 
 export class LexError(Error):
@@ -18,8 +18,8 @@ export class LexError(Error):
         self.col = col
 
 export class Token:
-    kind: str = ''       # INT, NAME, KW, STR, OP, NEWLINE, INDENT, DEDENT or EOF
-    text: str = ''       # the source text, or the decoded text of a STR
+    kind: str = ''       # INT, NAME, KW, STR, BYTES, OP, NEWLINE, INDENT, DEDENT or EOF
+    text: str = ''       # the source text, the decoded text of a STR, or the bytes of a BYTES as hex digits (two for each byte)
     num: int = 0         # the value of an INT; 1 on a NAME the lexer wrote itself (the str of an f-string): the built-in, see Node.core
     scale: int = 0       # for a FLOAT: the digits after the point, less the exponent
     line: int = 0
@@ -196,6 +196,71 @@ def scan_string(raw: str, i: int) -> Scan:
     else:
         s.end = j + 1
     return s
+
+# a bytes literal b'...' (D17e) that starts at raw[i] (the b; the quote is raw[i + 1]): the index after the closing quote, or the end of
+# the line when it is missing. It takes the escapes of a text and \xHH (two hex digits, a byte from 0 to 255), and only ASCII characters:
+# a byte above 127 is written \xHH. A problem is an escape that is not known, a \x without two hex digits, a character that is not
+# ASCII, or the missing quote.
+def scan_bytes(raw: str, i: int) -> Scan:
+    s = Scan()
+    n = len(raw)
+    quote = raw[i + 1]
+    j = i + 2
+    while j < n and raw[j] != quote:
+        c = raw[j]
+        if c == '\\':
+            j += 1
+            if j >= n:
+                break
+            if raw[j] == 'x':
+                if j + 2 < n and is_hex_digit(raw[j + 1]) and is_hex_digit(raw[j + 2]):
+                    j += 2
+                else:
+                    fail(s, BAD_BYTES_HEX, j, j - 1, j + 1)
+            elif not is_escape(raw[j]):
+                fail(s, unknown_bytes_escape(raw[j]), j, j - 1, j + 1)
+        elif ord(c) > 126 or (ord(c) < 32 and c != '\t'):
+            fail(s, non_ascii_bytes(c), j + 1, j, j + 1)
+        j += 1
+    if j >= n:
+        fail(s, f'this bytes literal is missing its closing quote {quote}\nadd {quote} at the end of it', i + 2, n, n)
+        s.end = n
+    else:
+        s.end = j + 1
+    return s
+
+def is_hex_digit(c: str) -> bool:
+    return c in '0123456789abcdefABCDEF'
+
+const BAD_BYTES_HEX = 'a \\x escape in a bytes literal needs two hex digits\nwrite a byte as \\x00 to \\xff'
+
+def unknown_bytes_escape(e: str) -> str:
+    return "this bytes literal has an unknown escape '\\" + e + "'\nuse one of \\xHH \\n \\t \\r \\0 \\\\ \\' \\\" (to write a backslash, double it)"
+
+def non_ascii_bytes(c: str) -> str:
+    if ord(c) < 32 or ord(c) == 127:
+        return f'a bytes literal holds only printable ASCII characters, and this is the control character {ord(c)}\nwrite the byte as an escape such as \\x{"0123456789abcdef"[ord(c) // 16]}{"0123456789abcdef"[ord(c) % 16]}'
+    return f"a bytes literal holds only ASCII characters, and '{c}' is not one\nwrite its bytes as \\xHH escapes, or write a text and encode it: '{c}'.encode()"
+
+# the value of a bytes literal whose text is raw[a:b] (between its quotes), as hex digits, two (lower case) for each byte: the compiler
+# writes the constant from them, so a text never has to hold bytes that are not UTF-8. scan_bytes has checked the escapes.
+def bytes_hex(raw: str, a: int, b: int) -> str:
+    digits = '0123456789abcdef'
+    buf = ''
+    j = a
+    while j < b:
+        code = ord(raw[j])
+        if raw[j] == '\\':
+            j += 1
+            e = raw[j]
+            if e == 'x':
+                code = '0123456789abcdef'.find(raw[j + 1].lower()) * 16 + '0123456789abcdef'.find(raw[j + 2].lower())
+                j += 2
+            else:
+                code = ord(escape_char(e, 0, 0))
+        buf += digits[code // 16] + digits[code % 16]
+        j += 1
+    return buf
 
 # the text of a string between its quotes (raw[a:b]), with its escapes turned into the characters: scan_string has checked them
 def unescape(raw: str, a: int, b: int) -> str:
@@ -437,6 +502,12 @@ def lex_line(raw: str, ln: int, toks: list[Token], depth: int) -> int:
             i = lex_number(raw, i, ln, toks)
         elif c == 'f' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
             i = lex_fstring(raw, i, ln, toks)
+        elif c == 'b' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
+            s = scan_bytes(raw, i)
+            if s.message != '':
+                raise LexError(s.message, ln, s.col)
+            toks.append(make_token('BYTES', bytes_hex(raw, i + 2, s.end - 1), 0, ln))
+            i = s.end
         elif is_alpha(c) or c == '_':
             j = name_end(raw, i)
             w = raw[i:j]
@@ -640,6 +711,10 @@ class SpanLexer:
                     i = s.stop
             elif c == 'f' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
                 i = self.fstring(raw, i, ln, at)
+            elif c == 'b' and i + 1 < n and (raw[i + 1] == '"' or raw[i + 1] == "'"):
+                s = scan_bytes(raw, i)
+                self.string(raw, i, ln, at, s)
+                i = s.end
             elif is_alpha(c) or c == '_':
                 j = name_end(raw, i)
                 kind = 'name'

@@ -1,16 +1,16 @@
 256 True 256 0 255 32640
-hi| [104, 105, 10]
-[104, 105, 10, 1, 2, 255]
-[] 0
-[9, 8, 7]
-write E391 [9, 8, 7]
-append E391 [9, 8, 7]
-write E391 [9, 8, 7]
-append E391 [9, 8, 7]
-write E391 [9, 8, 7]
-append E391 [9, 8, 7]
-write E391 [9, 8, 7]
-append E391 [9, 8, 7]
+hi| b'hi\n'
+b'hi\n\x01\x02\xff'
+b'' 0
+b'\t\x08\x07'
+write E391 b'\t\x08\x07'
+append E391 b'\t\x08\x07'
+write E391 b'\t\x08\x07'
+append E391 b'\t\x08\x07'
+write E391 b'\t\x08\x07'
+append E391 b'\t\x08\x07'
+write E391 b'\t\x08\x07'
+append E391 b'\t\x08\x07'
 bad value before open E391 False
 read missing E505
 write missing dir E505

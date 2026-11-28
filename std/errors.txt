@@ -98,7 +98,7 @@ CompileError 'break' can only be used inside a loop
 CompileError 'catch' needs an error class, but '{}' is not one
 CompileError 'continue' can only be used inside a loop
 CompileError 'else' after 'try' needs a 'catch' block before it
-CompileError 'in' can search only lists of int, bool or str
+CompileError 'in' can search only lists of int, bool, str or bytes
 CompileError 'in' does not work with '{}
 CompileError 'in' does not work with {}
 CompileError 'self' can only be used in methods inside a class
@@ -169,7 +169,7 @@ CompileError a value of type {} has no fields
 CompileError a value of type {} is never None, so it cannot be compared with None
 CompileError a {} item needs a value
 CompileError abs() takes an int or a float, but this is {}
-CompileError an LLVM function can only take int, bool, float, text and list values, and return int, bool, float and text
+CompileError an LLVM function can only take int, bool, float, text, bytes and list values, and return int, bool, float, text and bytes
 CompileError an LLVM function cannot take keyword arguments
 CompileError an await cannot be in either value of a conditional expression
 CompileError an entry point (a function marked with @main or similar) cannot return a value
@@ -229,7 +229,7 @@ CompileError no function is marked @{}
 CompileError only a function name can be called here
 CompileError only a task can be awaited, but this is {}
 CompileError only list and dict items can be assigned by index
-CompileError only text, lists, tuples and ranges can be sliced, but this is {}
+CompileError only text, bytes, lists, tuples and ranges can be sliced, but this is {}
 CompileError open() takes a path, and optionally a mode, both as text: open(path) or open(path, mode)
 CompileError pop() takes at most 1 argument: pop() or pop(index)
 CompileError print() gives no value, so it cannot be used inside an expression
@@ -621,3 +621,23 @@ ValueError {} value cannot be written as TOML
 ConfigError {}: the word given to tomato seed add is not a host shortcut (gh:USER/REPO, gitlab:USER/REPO, codeberg:USER/REPO, srht:~USER/REPO) or a seed name, or a shortcut has none of --rev, --tag and --branch
 ConfigError {}: the "# seeds:" line of a program cannot be used: it is not NAME or NAME>=VERSION separated by commas, or there is no project that lists the seeds it names, or a locked seed is older than it asks
 CompileError '{}' is the name of a built-in type, so a variable cannot have it
+ValueError bytes() needs a count that is not negative
+ValueError unknown encoding
+ValueError unknown error mode
+ValueError invalid ASCII
+ValueError the text is not ASCII
+ValueError an empty separator cannot be used to
+CompileError bytes() cannot take text, because text has no single byte form
+CompileError 'bytes' does not take keyword arguments
+CompileError bytes() takes a count (int), a list of ints from 0 to 255 or bytes, but this is {}
+CompileError bytes() takes at most one argument: bytes(), bytes(count), bytes(list_of_ints) or bytes(data)
+CompileError '{}' does not work on bytes
+CompileError 'in' with bytes needs an int (a byte) or bytes on its left, but this is {}
+CompileError the type bytes has no function '{}'
+CompileError this bytes literal has an unknown escape '{}'
+CompileError this bytes literal is missing its closing quote {}
+CompileError a \x escape in a bytes literal needs two hex digits
+CompileError a bytes literal holds only ASCII characters, and {} is not one
+CompileError a bytes literal holds only printable ASCII characters, and this is the control character {}
+ValueError randbytes needs a length of 0 or more
+ValueError the separator of hex() must be one character

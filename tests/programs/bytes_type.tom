@@ -1,0 +1,145 @@
+# The bytes type (D17e): literals, len, indexing, slicing, + and *, comparison, in, for, hashing (dict keys and set elements),
+# printing, the constructors, list(), the methods, str.encode, optionals and unions of bytes, and the errors they raise.
+class Packet:
+    tag: str = ''
+    data: bytes = b''
+
+    @init
+    def make(self, tag: str, data: bytes = b'\x01'):
+        self.tag = tag
+        self.data = data
+
+def first[T](xs: list[T]) -> T:
+    return xs[0]
+
+def pick(flag: bool) -> bytes | None:
+    if flag:
+        return b'yes'
+    return None
+
+def grow(n: int) -> bytes:
+    out = b''
+    for i in range(n):
+        out = out + bytes([i % 256])
+    return out
+
+def fails(k: int):
+    b = b'abc'
+    if k == 0:
+        print(b[3])
+    elif k == 1:
+        print(300 in b)
+    elif k == 2:
+        print(bytes([1, 256]))
+    elif k == 3:
+        print(bytes(-1))
+    elif k == 4:
+        print(b'a\xffb'.decode())
+    elif k == 5:
+        print(bytes.fromhex('abc'))
+    elif k == 6:
+        print(bytes.fromhex('zz'))
+    elif k == 7:
+        print(b'x'.decode('latin-9'))
+    elif k == 8:
+        print('é'.encode('ascii'))
+    elif k == 9:
+        print(b'a'.split(b''))
+    elif k == 10:
+        print(b'\x80'.decode('ascii'))
+    elif k == 11:
+        print(b[-4])
+    elif k == 12:
+        print(b'x'.decode(errors='ignore'))
+    elif k == 13:
+        print(b[::0])
+    elif k == 14:
+        print(-1 in b)
+    elif k == 15:
+        print(bytes([2 ** 70]))
+    elif k == 16:
+        print(b'\xe0\x80\x80'.decode())
+    elif k == 17:
+        print(b'ok\xf0\x9f\x98'.decode())
+    elif k == 18:
+        print(b'\x01\x02'.hex(', '))
+
+@main
+def main():
+    b = b'hello\x00\xff\n'
+    print(b, len(b), b[0], b[-1], b[1:3], b[::-1])
+    print(b'a' + b'bc', b'ab' * 3, 3 * b'x', b'abc' == b'abc', b'abc' < b'abd', b'' < b'a')
+    print(104 in b, b'll' in b, 7 in b)
+    total = 0
+    for x in b:
+        total += x
+    print(total)
+    d: dict[bytes, int] = {b'k': 1}
+    d[b'j'] = 2
+    print(d, d[b'k'], b'j' in d)
+    s: set[bytes] = {b'a', b'a', b'b'}
+    print(len(s))
+    print([b'it\'s', b'"q"', b"both'\""], str(b'\t\r\\'))
+    print(bytes(), bytes(3), bytes([1, 2, 255]), list(b'AB'), bytes([]))
+    print('héllo'.encode(), 'héllo'.encode().decode(), b'\xff\xfeA'.decode(errors='replace'))
+    print(b'deadbeef'.hex(), bytes.fromhex('de ad BE ef'), b'\x01\x02'.hex(':'))
+    print(b'a,b,,c'.split(b','), b'-'.join([b'x', b'y']), b'aXbXc'.replace(b'X', b'--'), b'  hi \n'.strip())
+    print(b'hello'.find(b'l'), b'hello'.rfind(b'l'), b'hello'.count(b'l'), b'hello'.startswith(b'he'), b'hello'.endswith(b'lo'))
+    print(sum(b'\x01\x02'), max(b'\x01\x09'), hash(b'x') == hash(b'x'))
+    u: bytes | None = None
+    print(u)
+    u = b'z'
+    print(u)
+    v: int | bytes = b'q'
+    print(v, [v])
+    if v is bytes:
+        print('is bytes', len(v))
+    print(f'{b} and {b"x"}')
+    p = Packet('a')
+    q = Packet('b', b'xyz')
+    print(p.data, q.data, len(q.data))
+    xs = [b'a', b'b']
+    print(xs == [b'a', b'b'], xs != [b'a'], b'b' in xs, first(xs))
+    t = (b'k', 1)
+    td: dict[tuple[bytes, int], str] = {t: "v"}
+    print(td[(b"k", 1)])
+    r = pick(True)
+    if r is not None:
+        print(len(r), r[0])
+    print(pick(False), pick(True) == b'yes')
+    g = grow(300)
+    print(len(g), g[255], g[256], g[-1])
+    f: fn(bytes) -> bytes = (x) -> x + b'!'
+    print(f(b'hi'))
+    m: dict[str, bytes] = {}
+    m['a'] = b'1'
+    m['a'] = b'2'
+    print(m)
+    ys: list[bytes] = []
+    for i in range(3):
+        ys.append(str(i).encode())
+    print(ys, b','.join(ys))
+    e = b''
+    print(e, len(e), e == b'')
+    print(b'\x00' * 0, b'ab'[5:], b'abc'[-100:100], b'abcdef'[1:5:2])
+    b = b'ab\xff'
+    for i, x in enumerate(b):
+        print(i, x)
+    print(sorted(b'cab'), min(b'cab'), sorted([b'b', b'a', b'\xff', b'']))
+    print(b'\xff' > b'a', b'a' <= b'a', b'b' >= b'a')
+    zs = [x * 2 for x in b'\x01\x02']
+    print(zs)
+    s = {b'x'}
+    s.add(b'y')
+    print(b'y' in s, len(s))
+    print(b'\xff\xfeA'.decode(errors='replace'), b'\xe2\x82'.decode(errors='replace'), b'a\xed\xa0\x80b'.decode(errors='replace'), b'\xf0\x9f\x98'.decode(errors='replace'))
+    print(b'aaa'.count(b''), b'abc'.find(b'', 5), b'abc'.find(b'',3), b'abcabc'.find(b'c', -2), b'abcabc'.rfind(b'b', 0, 4), b'a.b.c'.split(b'.', 1), b'aXbXc'.replace(b'X', b'', 1), b'abc'.replace(b'', b'-'), b'ab'.replace(b'', b'-', 2))
+    print(b'xxhixx'.strip(b'x'), b'\x01\x02\x03'.hex('-'), bytes.fromhex(' 0a  0B\n'), 'aé'.encode('ascii','replace'))
+    print(b'\x7f\x1b')
+    for k in range(19):
+        try:
+            fails(k)
+        catch IndexError as e:
+            print(k, 'IndexError', e)
+        catch ValueError as e:
+            print(k, 'ValueError', e)

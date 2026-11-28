@@ -78,10 +78,10 @@ def main():
     catch ValueError as e:
         print('ValueError', e.id, e.message[:30])
     # an infinity or a NaN that MessagePack brought in is passed through as the C library treats it
-    nan = loads_msgpack([203, 127, 248, 0, 0, 0, 0, 0, 0]).as_float()
-    inf = loads_msgpack([203, 127, 240, 0, 0, 0, 0, 0, 0]).as_float()
-    minus_inf = loads_msgpack([203, 255, 240, 0, 0, 0, 0, 0, 0]).as_float()
-    minus_nan = loads_msgpack([203, 255, 248, 0, 0, 0, 0, 0, 0]).as_float()
+    nan = loads_msgpack(bytes([203, 127, 248, 0, 0, 0, 0, 0, 0])).as_float()
+    inf = loads_msgpack(bytes([203, 127, 240, 0, 0, 0, 0, 0, 0])).as_float()
+    minus_inf = loads_msgpack(bytes([203, 255, 240, 0, 0, 0, 0, 0, 0])).as_float()
+    minus_nan = loads_msgpack(bytes([203, 255, 248, 0, 0, 0, 0, 0, 0])).as_float()
     print('nan', sqrt(nan), exp(inf), exp(minus_inf), log(inf), hypot(inf, nan), atan2(1.0, inf), round(nan, 2), round(inf, -3))
     # beside a float that is not a double: what the C library gives for a huge or tiny double of the same sign
     print('box', hypot(big, nan), hypot(big, inf), hypot(tiny, minus_inf), atan2(big, inf), atan2(nan, big), atan2(tiny, inf), atan2(inf, -tiny), atan2(-big, minus_inf))

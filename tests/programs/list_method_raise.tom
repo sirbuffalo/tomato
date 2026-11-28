@@ -1,0 +1,31 @@
+# A list method whose argument raises frees the list it was called on: extend, pop and insert on a list read from a field held it
+# without a way to let go of it on the error path (found by the bytes migration, D17e). AddressSanitizer checks nothing leaks.
+class P:
+    data: list[int] = [1, 2]
+
+def boom() -> int:
+    raise ValueError('boom', 'E11')
+
+def boom_list() -> list[int]:
+    raise ValueError('boom list', 'E11')
+
+@main
+def main():
+    p = P()
+    try:
+        p.data.extend(boom_list())
+    catch ValueError as e:
+        print('extend:', e.message)
+    try:
+        p.data.pop(boom())
+    catch ValueError as e:
+        print('pop:', e.message)
+    try:
+        p.data.insert(boom(), 3)
+    catch ValueError as e:
+        print('insert:', e.message)
+    try:
+        p.data.append(boom())
+    catch ValueError as e:
+        print('append:', e.message)
+    print(p.data)

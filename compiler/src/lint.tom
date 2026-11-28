@@ -24,7 +24,7 @@ def finding(line: int, kind: str, message: str) -> Finding:
 
 # the built-in functions and classes whose names a variable should not take
 export def builtin_names() -> list[str]:
-    return ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'clock', 'range', 'min', 'max', 'sum', 'abs', 'chr', 'ord', 'sorted', 'map', 'filter', 'reversed', 'enumerate', 'zip', 'list', 'dict', 'set', 'tuple', 'bool', 'hash']
+    return ['print', 'len', 'str', 'int', 'float', 'open', 'input', 'sleep', 'clock', 'range', 'min', 'max', 'sum', 'abs', 'chr', 'ord', 'sorted', 'map', 'filter', 'reversed', 'enumerate', 'zip', 'list', 'dict', 'set', 'tuple', 'bool', 'hash', 'bytes']
 
 # every name written anywhere under v (a variable, a function, a type, a field), for finding unused imports
 def words(v: Val, out: list[str]):

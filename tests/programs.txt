@@ -256,3 +256,5 @@ bare_raise_async
 optional_interface
 shadow_locals
 shadow_core
+bytes_type
+list_method_raise

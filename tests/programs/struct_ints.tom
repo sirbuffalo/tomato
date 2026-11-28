@@ -3,11 +3,11 @@ import struct
 @main
 def main():
     print(struct.pack_ints('>BxHq', [255, 4660, -2]))
-    print(struct.unpack_ints('>BxHq', [255, 0, 18, 52, 255, 255, 255, 255, 255, 255, 255, 254]))
+    print(struct.unpack_ints('>BxHq', bytes([255, 0, 18, 52, 255, 255, 255, 255, 255, 255, 255, 254])))
     print(struct.calcsize('>BxHq'))
     print(struct.int_to_bytes(18446744073709551616, 9))
-    print(struct.int_from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0]))
-    print(struct.int_to_bytes(-1, 2, 'little', True), struct.int_from_bytes([255, 255], 'little', True))
+    print(struct.int_from_bytes(bytes([1, 0, 0, 0, 0, 0, 0, 0, 0])))
+    print(struct.int_to_bytes(-1, 2, 'little', True), struct.int_from_bytes(b'\xff\xff', 'little', True))
     p = struct.Packer('>')
     p.u16(4660)
     p.i32(-2)
@@ -15,7 +15,7 @@ def main():
     print(p.bytes())
     r = struct.Reader(p.bytes())
     print(r.read_u16(), r.read_i32(), r.read_text(3), r.remaining())
-    r = struct.Reader([255])
+    r = struct.Reader(b'\xff')
     try:
         r.read_u16()
     catch ValueError:
@@ -25,7 +25,7 @@ def main():
     catch ValueError:
         print('utf8', r.pos)
     try:
-        struct.unpack_ints('>H', [1])
+        struct.unpack_ints('>H', bytes([1]))
     catch struct.StructError:
         print('StructError')
     try:
@@ -132,102 +132,102 @@ def main():
         struct.pack_ints('>Q', [18446744073709551616])
     catch OverflowError:
         print('overflow')
-    print(struct.unpack_ints('<2b', [128, 127]))
+    print(struct.unpack_ints('<2b', bytes([128, 127])))
     try:
         struct.pack_ints('<b', [-129])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('<2B', [0, 255]))
+    print(struct.unpack_ints('<2B', bytes([0, 255])))
     try:
         struct.pack_ints('<B', [-1])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('<2h', [0, 128, 255, 127]))
+    print(struct.unpack_ints('<2h', bytes([0, 128, 255, 127])))
     try:
         struct.pack_ints('<h', [-32769])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('<2H', [0, 0, 255, 255]))
+    print(struct.unpack_ints('<2H', bytes([0, 0, 255, 255])))
     try:
         struct.pack_ints('<H', [-1])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('<2i', [0, 0, 0, 128, 255, 255, 255, 127]))
+    print(struct.unpack_ints('<2i', bytes([0, 0, 0, 128, 255, 255, 255, 127])))
     try:
         struct.pack_ints('<i', [-2147483649])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('<2I', [0, 0, 0, 0, 255, 255, 255, 255]))
+    print(struct.unpack_ints('<2I', bytes([0, 0, 0, 0, 255, 255, 255, 255])))
     try:
         struct.pack_ints('<I', [-1])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('<2l', [0, 0, 0, 128, 255, 255, 255, 127]))
+    print(struct.unpack_ints('<2l', bytes([0, 0, 0, 128, 255, 255, 255, 127])))
     try:
         struct.pack_ints('<l', [-2147483649])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('<2L', [0, 0, 0, 0, 255, 255, 255, 255]))
+    print(struct.unpack_ints('<2L', bytes([0, 0, 0, 0, 255, 255, 255, 255])))
     try:
         struct.pack_ints('<L', [-1])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('<2q', [0, 0, 0, 0, 0, 0, 0, 128, 255, 255, 255, 255, 255, 255, 255, 127]))
+    print(struct.unpack_ints('<2q', bytes([0, 0, 0, 0, 0, 0, 0, 128, 255, 255, 255, 255, 255, 255, 255, 127])))
     try:
         struct.pack_ints('<q', [-9223372036854775809])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('<2Q', [0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255]))
+    print(struct.unpack_ints('<2Q', bytes([0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255])))
     try:
         struct.pack_ints('<Q', [-1])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('>2b', [128, 127]))
+    print(struct.unpack_ints('>2b', bytes([128, 127])))
     try:
         struct.pack_ints('>b', [-129])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('>2B', [0, 255]))
+    print(struct.unpack_ints('>2B', bytes([0, 255])))
     try:
         struct.pack_ints('>B', [-1])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('>2h', [128, 0, 127, 255]))
+    print(struct.unpack_ints('>2h', bytes([128, 0, 127, 255])))
     try:
         struct.pack_ints('>h', [-32769])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('>2H', [0, 0, 255, 255]))
+    print(struct.unpack_ints('>2H', bytes([0, 0, 255, 255])))
     try:
         struct.pack_ints('>H', [-1])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('>2i', [128, 0, 0, 0, 127, 255, 255, 255]))
+    print(struct.unpack_ints('>2i', bytes([128, 0, 0, 0, 127, 255, 255, 255])))
     try:
         struct.pack_ints('>i', [-2147483649])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('>2I', [0, 0, 0, 0, 255, 255, 255, 255]))
+    print(struct.unpack_ints('>2I', bytes([0, 0, 0, 0, 255, 255, 255, 255])))
     try:
         struct.pack_ints('>I', [-1])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('>2l', [128, 0, 0, 0, 127, 255, 255, 255]))
+    print(struct.unpack_ints('>2l', bytes([128, 0, 0, 0, 127, 255, 255, 255])))
     try:
         struct.pack_ints('>l', [-2147483649])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('>2L', [0, 0, 0, 0, 255, 255, 255, 255]))
+    print(struct.unpack_ints('>2L', bytes([0, 0, 0, 0, 255, 255, 255, 255])))
     try:
         struct.pack_ints('>L', [-1])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('>2q', [128, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255]))
+    print(struct.unpack_ints('>2q', bytes([128, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255])))
     try:
         struct.pack_ints('>q', [-9223372036854775809])
     catch OverflowError:
         print('underflow')
-    print(struct.unpack_ints('>2Q', [0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255]))
+    print(struct.unpack_ints('>2Q', bytes([0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255])))
     try:
         struct.pack_ints('>Q', [-1])
     catch OverflowError:
@@ -237,7 +237,7 @@ def main():
     catch struct.StructError:
         print('bad format')
     try:
-        struct.unpack_ints('B', [1, 2])
+        struct.unpack_ints('B', bytes([1, 2]))
     catch struct.StructError:
         print('long buffer')
     try:
@@ -246,10 +246,8 @@ def main():
         print('value count')
     p = struct.Packer()
     p.u8(7)
-    try:
-        p.raw([3, 256])
-    catch ValueError:
-        print('unchanged', p.bytes())
+    p.raw(b'\x03\xff')
+    print(p.bytes())
     # an absurd repeat count is refused, not expanded
     for fmt in ['999999999999i', '1000001b', '600000b600000b']:
         try:

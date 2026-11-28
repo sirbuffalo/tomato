@@ -15,7 +15,7 @@ def main():
     print(terminal.color_depth('auto'), terminal.color_depth('never'), terminal.color_depth('always'))
     print(terminal.char_width(65), terminal.char_width(20013), terminal.char_width(769), terminal.text_width('ab' + chr(20013)))
     d = KeyDecoder()
-    for k in d.feed([27, 91, 49, 59, 53, 67, 104, 195, 169]):
+    for k in d.feed(bytes([27, 91, 49, 59, 53, 67, 104, 195, 169])):
         print(k)
     green = Style(terminal.rgb(0, 150, 57), -1, True)
     print(terminal.styled('x', green, 256) == chr(27) + '[1;38;5;29mx' + chr(27) + '[0m', terminal.styled('x', green, 0))

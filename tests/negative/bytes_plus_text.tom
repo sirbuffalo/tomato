@@ -1,0 +1,4 @@
+# bytes and text are different types: + between them is refused, with the way to convert one (D17e)
+@main
+def main():
+    print(b'a' + 'b')

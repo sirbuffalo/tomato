@@ -64,7 +64,7 @@ export class Value:
         raise ValueTypeError(f'expected a date or time, but this is {self.what()}', 'E71')
 
     # MessagePack values: a byte string, an extension value, a timestamp
-    def as_bytes(self) -> list[int]:
+    def as_bytes(self) -> bytes:
         raise ValueTypeError(f'expected a bin or ext, but this is {self.what()}', 'E71')
 
     def ext_type(self) -> int:
@@ -317,18 +317,18 @@ export class Dict(Value):
             self.fields[key].show_to(out)
         out.append('}')
 
-# A MessagePack bin: a byte string, as a list of ints from 0 to 255.
+# A MessagePack bin: a byte string.
 export class Bin(Value):
-    data: list[int] = []
+    data: bytes = b''
 
     @init
-    def make_bin(self, data: list[int]):
+    def make_bin(self, data: bytes):
         self.data = data
 
     override def kind(self) -> str:
         return 'bin'
 
-    override def as_bytes(self) -> list[int]:
+    override def as_bytes(self) -> bytes:
         return self.data
 
     @len
@@ -344,17 +344,17 @@ export class Bin(Value):
 # A MessagePack extension value: a type code from -128 to 127 (not -1, which is a timestamp) and bytes.
 export class Ext(Value):
     code: int = 0
-    data: list[int] = []
+    data: bytes = b''
 
     @init
-    def make_ext(self, code: int, data: list[int]):
+    def make_ext(self, code: int, data: bytes):
         self.code = code
         self.data = data
 
     override def kind(self) -> str:
         return 'ext'
 
-    override def as_bytes(self) -> list[int]:
+    override def as_bytes(self) -> bytes:
         return self.data
 
     override def ext_type(self) -> int:

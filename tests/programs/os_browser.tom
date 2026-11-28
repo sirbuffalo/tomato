@@ -53,8 +53,8 @@ def main():
     os.remove(base + '/z.txt')
     os.rmdir(base + '/p2/q/r')
     print(names(os.listdir(base)), names(os.listdir(base + '/p2/q')))
-    os.write_bytes(base + '/bin', [0, 1, 254, 255])
-    os.write_bytes(base + '/bin', [7], append=True)
+    os.write_bytes(base + '/bin', b'\x00\x01\xfe\xff')
+    os.write_bytes(base + '/bin', b'\x07', append=True)
     print(os.read_bytes(base + '/bin'))
     # the error classes
     try:

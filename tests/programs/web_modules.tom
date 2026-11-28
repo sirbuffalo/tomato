@@ -17,9 +17,9 @@ def main():
     print(html.escape('<a href="x">Tom & Jerry</a>'))
     print(html.escape('<a href="x">', False))
     print(html.unescape('&lt;b&gt; &amp; &#169; &eacute; &#x1F600;'))
-    print(base64.b64encode([104, 101, 108, 108, 111]), base64.b64decode('aGVsbG8='))
-    print(base64.urlsafe_b64encode([251, 255, 190]), base64.urlsafe_b64decode('-_--'))
-    print(hex.encode([222, 173, 190, 239]), hex.decode('DEADbeef'))
+    print(base64.b64encode(b'hello'), base64.b64decode('aGVsbG8='))
+    print(base64.urlsafe_b64encode(b'\xfb\xff\xbe'), base64.urlsafe_b64decode('-_--'))
+    print(hex.encode(b'\xde\xad\xbe\xef'), hex.decode('DEADbeef'))
     # a round trip of every byte
-    every = list(range(256))
+    every = bytes(list(range(256)))
     print(base64.b64decode(base64.b64encode(every)) == every, hex.decode(hex.encode(every)) == every)

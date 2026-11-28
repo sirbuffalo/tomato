@@ -35,3 +35,11 @@ def main():
     print([rng.gauss(10.0, 2.0) for i in range(5)])
     rng.seed(2024)
     print(rng.randint(1, 6))
+    # randbytes: n bytes, the same for the same seed
+    rb = Random(3)
+    print(rb.randbytes(0), rb.randbytes(1), rb.randbytes(5), rb.randbytes(8))
+    print(Random(9).randbytes(14) == Random(9).randbytes(14), len(rb.randbytes(1000)))
+    try:
+        print(rb.randbytes(-1))
+    catch ValueError as e:
+        print('ValueError', e.id)

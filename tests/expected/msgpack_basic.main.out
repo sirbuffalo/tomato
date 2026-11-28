@@ -113,12 +113,12 @@ ca3fc00000 float
 cb3ff8000000000000 float
 1 500
 -1 999999999
--5 [1, 2]
-[10, 255]
+-5 b'\x01\x02'
+b'\n\xff'
 -- round trips
 True {"name":"tomato","tags":["red","round"],"n":3,"f":1500.5,"big":-9223372036854775808,"nested":{"a":[true,false,null,-7]},"u":"日本語 😀"}
 True
-[0, 1, 2, 254, 255] 42 [9, 8, 7] 1700000000 123456789 bin -5
+b'\x00\x01\x02\xfe\xff' 42 b'\t\x08\x07' 1700000000 123456789 bin -5
 True
 -- NaN and infinity: valid MessagePack, kept as floats, and refused by JSON text
 float cb7ff8000000000000

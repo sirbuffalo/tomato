@@ -1,54 +1,54 @@
-[255, 0, 18, 52, 255, 255, 255, 255, 255, 255, 255, 254]
+b'\xff\x00\x124\xff\xff\xff\xff\xff\xff\xff\xfe'
 [255, 4660, -2]
 12
-[1, 0, 0, 0, 0, 0, 0, 0, 0]
+b'\x01\x00\x00\x00\x00\x00\x00\x00\x00'
 18446744073709551616
-[255, 255] -1
-[18, 52, 255, 255, 255, 254, 104, 195, 169]
+b'\xff\xff' -1
+b'\x124\xff\xff\xff\xfeh\xc3\xa9'
 4660 -2 hé 0
 short 0
 utf8 0
 StructError
 OverflowError
-[128, 127]
+b'\x80\x7f'
 overflow
-[0, 255]
+b'\x00\xff'
 overflow
-[0, 128, 255, 127]
+b'\x00\x80\xff\x7f'
 overflow
-[0, 0, 255, 255]
+b'\x00\x00\xff\xff'
 overflow
-[0, 0, 0, 128, 255, 255, 255, 127]
+b'\x00\x00\x00\x80\xff\xff\xff\x7f'
 overflow
-[0, 0, 0, 0, 255, 255, 255, 255]
+b'\x00\x00\x00\x00\xff\xff\xff\xff'
 overflow
-[0, 0, 0, 128, 255, 255, 255, 127]
+b'\x00\x00\x00\x80\xff\xff\xff\x7f'
 overflow
-[0, 0, 0, 0, 255, 255, 255, 255]
+b'\x00\x00\x00\x00\xff\xff\xff\xff'
 overflow
-[0, 0, 0, 0, 0, 0, 0, 128, 255, 255, 255, 255, 255, 255, 255, 127]
+b'\x00\x00\x00\x00\x00\x00\x00\x80\xff\xff\xff\xff\xff\xff\xff\x7f'
 overflow
-[0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255]
+b'\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff'
 overflow
-[128, 127]
+b'\x80\x7f'
 overflow
-[0, 255]
+b'\x00\xff'
 overflow
-[128, 0, 127, 255]
+b'\x80\x00\x7f\xff'
 overflow
-[0, 0, 255, 255]
+b'\x00\x00\xff\xff'
 overflow
-[128, 0, 0, 0, 127, 255, 255, 255]
+b'\x80\x00\x00\x00\x7f\xff\xff\xff'
 overflow
-[0, 0, 0, 0, 255, 255, 255, 255]
+b'\x00\x00\x00\x00\xff\xff\xff\xff'
 overflow
-[128, 0, 0, 0, 127, 255, 255, 255]
+b'\x80\x00\x00\x00\x7f\xff\xff\xff'
 overflow
-[0, 0, 0, 0, 255, 255, 255, 255]
+b'\x00\x00\x00\x00\xff\xff\xff\xff'
 overflow
-[128, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255]
+b'\x80\x00\x00\x00\x00\x00\x00\x00\x7f\xff\xff\xff\xff\xff\xff\xff'
 overflow
-[0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255]
+b'\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff'
 overflow
 [-128, 127]
 underflow
@@ -93,7 +93,7 @@ underflow
 bad format
 long buffer
 value count
-unchanged [7]
+b'\x07\x03\xff'
 999999999999i E503
 1000001b E503
 600000b600000b E503
