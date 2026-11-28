@@ -1,0 +1,5 @@
+error[E190]: cannot use '+' with str and int | str
+ --> tests/errors/union_elif_falls_through.tom:8:16
+  |
+8 |     return out + x
+  |                ^

@@ -221,6 +221,7 @@ and eight more comparison languages; Linux x86-64 results are published next to 
 
 ### Fixes
 
+- A union is narrowed in the `else` and the later `elif` bodies of an `if` chain whose first condition is not the type test: `if flag: ... elif data is bytes: ... else: len(data)` no longer gives E190 or E221 there (D127a).
 - An optional of an interface takes the values of that interface: `def f(n: Named | None)` accepts a `Named` value and an instance of a class that implements `Named`, and `tag: Named | None = Tag()` is accepted (they were E324, D118a).
 - `@str` is found through the object's own class: a subclass's `@str` under another name is used when the value is typed as the
   parent (`class Own(Error)` with `@str def show`, then `catch Error as e: print(e)` printed the message alone, not `own:x`), as

@@ -1,0 +1,12 @@
+# the variable is narrowed from the `elif` that tests it, not before it: in the branch of the first condition it is still the whole union
+def f(flag: bool, x: str | int) -> int:
+    if flag:
+        return len(x)
+    elif x is int:
+        return x
+    else:
+        return len(x)
+
+@main
+def main():
+    print(f(False, 'ab'))

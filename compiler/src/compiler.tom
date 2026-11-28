@@ -10993,7 +10993,8 @@ class Gen:
 
     def if_stmt(self, s: Node):
         end = self.label('endif')
-        var = ''                       # the union variable the first condition tests, if it does
+        var = ''                       # the union variable the first condition that is a type test tests (there may be conditions before it that are not)
+        before_live = False            # a branch before that condition does not leave (so the variable can still be any member after the if)
         members: list[str] = []
         left: list[str] = []           # the members it can still be when the next condition is tested
         kept: list[str] = []           # the members it can be after the whole if, over the branches that do not leave
@@ -11021,10 +11022,13 @@ class Gen:
                     # (an earlier branch has settled it: this one always or never runs, and nothing is narrowed in it)
                     inner = []
                     target = []
-            if k == 0 and len(target) > 0:
+            if var == '' and len(target) > 0:
+                # (the conditions before this one did not test the variable, so every member is still possible here)
                 var = target[0]
                 members = union_members(self.types[var])
                 left = members
+                if before_live:
+                    kept = members
             if track:
                 self.facts = self.small_facts(self.live_facts(cur))
             cond = self.truth(self.expr(val_node(branch.items[0])), s.line)
@@ -11062,7 +11066,9 @@ class Gen:
                 if track:
                     outs = facts_join(outs, self.facts)
                 self.br(end)
-                if var != '' and len(target) > 0 and target[0] == var:
+                if var == '':
+                    before_live = True
+                elif len(target) > 0 and target[0] == var:
                     kept = kept + inner
                 elif var != '':
                     kept = kept + left

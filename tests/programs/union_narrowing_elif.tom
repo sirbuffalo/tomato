@@ -1,0 +1,143 @@
+# a union (or an optional) tested by an `elif` while the first condition says nothing about it (D55a): the `else`, the later `elif`
+# bodies and what follows the `if` know the members that are left, as when the type test comes first
+class Dog:
+    name: str = 'rex'
+
+class Cat:
+    name: str = 'tom'
+
+def text_or_bytes(flag: bool, data: str | bytes) -> str:
+    if flag:
+        return 'flag'
+    elif data is bytes:
+        return 'bytes ' + str(len(data))
+    else:
+        return 'text ' + data + '!'
+
+def text_or_int(flag: bool, x: str | int) -> str:
+    if flag:
+        return 'flag'
+    elif x is int:
+        return 'int ' + str(x + 1)
+    else:
+        return 'text ' + x.upper()
+
+# the test is not on the second condition: an `elif` on something else comes first, and `is not` flips the branches
+def deep(a: int, x: str | int) -> str:
+    if a == 0:
+        return 'zero'
+    elif a == 1:
+        return 'one'
+    elif x is not int:
+        return 'text ' + x
+    else:
+        return 'int ' + str(x * 2)
+
+# three members: the `else` is a union again, which a second test narrows
+def three(flag: bool, x: int | str | float) -> str:
+    if flag:
+        return 'flag'
+    elif x is int:
+        return 'int ' + str(x)
+    elif x is str:
+        return 'str ' + x
+    else:
+        return 'float ' + str(x + 0.5)
+
+# a condition between the tests that is not about the variable: the variable is a str | float in its body
+def between(n: int, x: int | str | float) -> str:
+    if n < 0:
+        return 'negative'
+    elif x is int:
+        return 'int ' + str(x)
+    elif n == 0:
+        return 'zero ' + str(x is str)
+    else:
+        if x is float:
+            return 'float ' + str(x + 0.5)
+        return 'str ' + x
+
+def three_else(flag: bool, x: int | str | float) -> str:
+    if flag:
+        return 'flag'
+    elif x is int:
+        return 'int ' + str(x)
+    else:
+        if x is str:
+            return 'str ' + x
+        return 'float ' + str(x + 0.5)
+
+def classes(flag: bool, x: Dog | Cat | int) -> str:
+    if flag:
+        return 'flag'
+    elif x is Dog:
+        return 'dog ' + x.name
+    elif x is Cat:
+        return 'cat ' + x.name
+    else:
+        return 'int ' + str(x + 1)
+
+# the branches before the test leave, so after the `if` the variable is what the test did not rule out
+def after_if(flag: bool, x: str | int) -> str:
+    if flag:
+        return 'flag'
+    elif x is int:
+        return 'int ' + str(x)
+    return 'text ' + x
+
+# a branch before the test falls through: the variable can still be any member after the `if`
+def falls_through(flag: bool, x: str | int) -> str:
+    out = ''
+    if flag:
+        out = 'flag '
+    elif x is int:
+        return out + 'int ' + str(x)
+    else:
+        out = 'text ' + x + ' '
+    if x is int:
+        return out + 'int ' + str(x)
+    return out + 'text ' + x
+
+# an optional is narrowed in the `else` of an `elif` too (D102a)
+def optional(flag: bool, s: str | None) -> str:
+    if flag:
+        return 'flag'
+    elif s is None:
+        return 'none'
+    else:
+        return 'text ' + s
+
+def optional_int(flag: bool, n: int | None) -> int:
+    if flag:
+        return -1
+    elif n is None:
+        return 0
+    else:
+        return n + 1
+
+# inside a loop, with the union assigned from a list
+def loop(items: list[str | int]) -> str:
+    out = ''
+    for k, item in enumerate(items):
+        if k == 0:
+            out += 'first '
+        elif item is int:
+            out += str(item + 1) + ' '
+        else:
+            out += item + ' '
+    return out
+
+@main
+def main():
+    print(text_or_bytes(True, 'a'), text_or_bytes(False, b'abc'), text_or_bytes(False, 'xy'))
+    print(text_or_int(True, 1), text_or_int(False, 5), text_or_int(False, 'ab'))
+    print(deep(0, 'a'), deep(1, 2), deep(2, 'a'), deep(2, 21))
+    print(three(True, 1), three(False, 7), three(False, 'a'), three(False, 1.5))
+    print(between(-1, 1), between(1, 5), between(0, 'a'), between(2, 'a'), between(2, 1.5))
+    print(three_else(True, 1), three_else(False, 7), three_else(False, 'a'), three_else(False, 1.5))
+    print(classes(True, 1), classes(False, Dog()), classes(False, Cat()), classes(False, 4))
+    print(after_if(True, 1), after_if(False, 2), after_if(False, 'b'))
+    print(falls_through(True, 'q'), falls_through(False, 3), falls_through(False, 'w'))
+    print(optional(True, None), optional(False, None), optional(False, 'z'))
+    print(optional_int(True, None), optional_int(False, None), optional_int(False, 9))
+    print(loop(['a', 1, 'b', 2]))

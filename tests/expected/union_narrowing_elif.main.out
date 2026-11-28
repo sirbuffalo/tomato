@@ -1,0 +1,12 @@
+flag bytes 3 text xy!
+flag int 6 text AB
+zero one text a int 42
+flag int 7 str a float 2.0
+negative int 5 zero True str a float 2.0
+flag int 7 str a float 2.0
+flag dog rex cat tom int 5
+flag int 2 text b
+flag text q int 3 text w text w
+flag none text z
+-1 0 10
+first 2 b 3 

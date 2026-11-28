@@ -51,6 +51,7 @@ type_is_nests
 type_is_class
 type_is_class_nests
 union_narrowing_nests
+union_narrowing_elif
 union_len_for
 fstrings
 conditional

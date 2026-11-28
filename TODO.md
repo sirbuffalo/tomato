@@ -16,12 +16,8 @@
   Check the kqueue wait on pipes and the `/dev/fd` listing (`tests/programs/sys_async.tom`, and the open-files check in `tests/programs/sys_run.tom`); everything of D98b was tested on Linux only.
 - Add `bytearray`, a mutable byte buffer
   D17e (the immutable `bytes` type) left it out because it only adds. Today bytes are built by appending ints to a `list[int]` and calling `bytes(items)` once, or with `b''.join(pieces)`.
-- Narrow a union in the `else` after an `elif` type test
-  After `if c: ... elif x is T: ...`, the `else` is not narrowed: `str | int` and `str | bytes` both give E190 there (for example `if flag: ... elif data is bytes: ... else: data != ''`). Found while migrating `requests` to bytes (D17e).
 - Close the small bytes gaps found by the D17e audit
   `const K = b'...'` is E261 (a constant must be a number, text or bool); `B'...'` and `b'''...'''` give the generic parse error, with no hint; `b'-'.join([])` needs a typed empty list; `sorted(xs, key=f)` with a key that returns bytes is refused (the key must be an int, a float or text).
-- Fix the `seed_prompt_pty.exp` timeout in the foreign-symbols terminal test
-  `foreign symbols: the question on a terminal (n and Enter refuse, y accepts)` in `tests/run.sh` fails with "timed out waiting for the symbol that is listed"; it failed the same way on a clean checkout of main on 2026-11-27 (the repl redeclaration test seen failing at the same time has since been fixed on main).
 - Add a help line to E324 when a plain value goes where a `value.Value` is expected
   `json.dumps(d)` with a `dict[str, int]` says only "has type dict[str, int], but value.Value is expected", with no help on how to build one (`from value import Value, Dict, Str, Int, ...`, e.g. `Dict({"a": Int(1)})`, or `json.dumps` of the built value). The text is in `Gen.want` (`compiler/src/compiler.tom`); a help line there changes the compiler, so `compiler/bootstrap/tomatoc.ll` and `site/wasm/*.wasm` must be regenerated, and `std/errors.txt` stays as it is (same template, help follows the `\n`). Add a whole-text test in `tests/errors/`.
 - Build the compile-time deprecation warning for std

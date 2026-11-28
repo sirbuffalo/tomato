@@ -1,0 +1,12 @@
+# a branch before the `elif` test falls through, so after the `if` the variable can still be any member
+def f(flag: bool, x: str | int) -> str:
+    out = ''
+    if flag:
+        out = 'flag'
+    elif x is int:
+        return 'int'
+    return out + x
+
+@main
+def main():
+    print(f(False, 'a'))

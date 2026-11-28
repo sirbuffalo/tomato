@@ -7,18 +7,26 @@ log_user 0
 set project [lindex $argv 0]
 set seed [lindex $argv 1]
 proc fail {msg} { puts "FAIL: $msg"; exit 1 }
+# a timeout or an end of the session says what the terminal showed (the unmatched output) so a wrong expectation is seen at once, not guessed at
+proc seen {} {
+  global expect_out
+  set expect_out(buffer) ""
+  expect -timeout 0 -re {(?s).+} {}
+  set b [string map [list "\r" "" "\n" " | "] $expect_out(buffer)]
+  return " (the terminal showed: [string range $b end-200 end])"
+}
 proc want {re what} {
   expect {
     -re $re {}
-    timeout { fail "timed out waiting for $what" }
-    eof { fail "the session ended while waiting for $what" }
+    timeout { fail "timed out waiting for $what[seen]" }
+    eof { fail "the session ended while waiting for $what[seen]" }
   }
 }
 set env(NO_COLOR) 1
 spawn sh
 send "cd $project\r"
 send "tomato seed add --path $seed; echo EXIT=\$?\r"
-want {tomato_json_quote} "the symbol that is listed"
+want {getpid  \(src/loc.tom:1\)} "the symbol that is listed"
 want {accept these symbols and record them in tomato.lock\? \[y/N\] } "the question"
 send "n\r"
 want {were not accepted; nothing was changed} "the refusal"
@@ -34,7 +42,7 @@ want {\[y/N\] } "the question a third time"
 send "y\r"
 want {added acme.example/loc 0.3.0 to \[seeds\]} "the seed added"
 want {EXIT=0} "the exit status 0 after y"
-if {[string first {symbols = ["tomato_json_quote"]} [exec cat $project/tomato.lock]] < 0} { fail "the lock does not hold the accepted symbol" }
+if {[string first {symbols = ["getpid"]} [exec cat $project/tomato.lock]] < 0} { fail "the lock does not hold the accepted symbol" }
 send "tomato seed install; echo EXIT=\$?\r"
 want {EXIT=0} "install asks nothing once the symbol is in the lock"
 puts ok

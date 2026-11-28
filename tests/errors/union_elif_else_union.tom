@@ -1,0 +1,12 @@
+# the `else` after an `elif` test of a three-member union is a union of the two members left, not one member
+def f(flag: bool, x: int | str | float) -> str:
+    if flag:
+        return 'flag'
+    elif x is int:
+        return 'int'
+    else:
+        return 'float ' + str(x + 0.5)
+
+@main
+def main():
+    print(f(False, 1.5))
