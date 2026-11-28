@@ -9,7 +9,7 @@
 from parser import Node, Val, parse, path_text, is_operator_marker, ParseError, val_node, val_nodes, vn, mk, vs, vz, vlist, vtuple, vnodes, vb
 from lexer import LexError, parse_format_spec
 from diag import Diagnostic, format_error, closest
-from lint import lint_items, falls_through
+from lint import lint_items, falls_through, builtin_names
 from modnames import std_modules
 from unstable import unstable_rows
 from config import default_exp_bits, default_format_digits
@@ -2532,6 +2532,7 @@ class Gen:
     after: list[list[str]] = []   # for each of those: its name, slot and type before, put back when the block ends
     slots: dict[str, str] = {}
     types: dict[str, str] = {}
+    hidden: list[str] = []        # the names the function binds anywhere in it, parameters and variables, found before it is compiled: a call of one of them is never a call of the built-in, wherever it is in the function (D125a), so the shortcuts that look ahead leave it alone
     n: int = 0
     terminated: bool = False
     breaks: list[str] = []
@@ -2696,6 +2697,8 @@ class Gen:
             if self.types[name] != ty:
                 raise CompileError(f"the variable '{name}' already has type {shown(self.types[name])}, so it cannot be redeclared as {shown(ty)}", line)
             return self.slots[name]
+        if reserved_type_name(name):
+            raise CompileError(f"'{name}' is the name of a built-in type, so a variable cannot have it\nchoose another name: a type name always means the built-in type", line)
         return self.new_slot(name, ty)
 
     def make_slot(self, reg: str, ty: str):
@@ -2903,7 +2906,7 @@ class Gen:
     def pure_call(self, f: Node) -> bool:
         # a call of a function of numbers that only computes: whatever it reads are its own parameters and variables, and it changes
         # nothing else (it may raise)
-        if f.fields[0].text in self.slots:
+        if f.fields[0].text in self.slots or f.fields[0].text in self.hidden:
             return False
         key = self.mod.resolve(f.fields[0].text)
         if key == '' or key in self.mod.generics or self.mod.has_class(key) or not self.mod.has_func(key):
@@ -2999,7 +3002,7 @@ class Gen:
         if len(s.fields) != 3 or s.fields[0].tag != 's' or it.kind != 'Call' or len(it.fields[2].items) != 0:
             return False
         f = val_node(it.fields[0])
-        if f.kind != 'Name' or f.fields[0].text != 'range' or 'range' in self.slots or self.mod.binding(self.mod.cur, 'range') is not None:
+        if f.kind != 'Name' or f.fields[0].text != 'range' or 'range' in self.hidden or self.mod.binding(self.mod.cur, 'range') is not None:
             return False                         # (the builtin range is a class of std/builtin/range.tom, not bound in a module)
         bounds = val_nodes(it.fields[1])
         if len(bounds) < 1 or len(bounds) > 3:
@@ -3172,7 +3175,7 @@ class Gen:
             f = val_node(n.fields[0])
             if f.kind == 'Attr':
                 return self.lent_method(n)
-            if f.kind != 'Name' or f.fields[0].text in self.slots or len(n.fields[2].items) > 0:
+            if f.kind != 'Name' or f.fields[0].text in self.hidden or len(n.fields[2].items) > 0:
                 return False
             args = val_nodes(n.fields[1])
             key = self.mod.resolve(f.fields[0].text)
@@ -7169,9 +7172,9 @@ class Gen:
         return result
 
     def is_builtin(self, f: Node, name: str) -> bool:
-        # is f the name of the built-in `name`? Not where the module defines or imports a `name` of its own (D108a), unless the compiler's
-        # own desugaring wrote it (f.core)
-        return f.kind == 'Name' and f.fields[0].text == name and (f.core or not self.mod.shadows(name))
+        # is f the name of the built-in `name`? Not where the module defines or imports a `name` of its own (D108a), nor where the function
+        # has a variable or parameter of that name (D125a), unless the compiler's own desugaring wrote it (f.core)
+        return f.kind == 'Name' and f.fields[0].text == name and (f.core or (not self.mod.shadows(name) and name not in self.hidden))
 
     def call(self, n: Node, statement: bool) -> Ex:
         f = val_node(n.fields[0])
@@ -7198,20 +7201,25 @@ class Gen:
         if f.kind != 'Name':
             raise CompileError('only a function name can be called here\ncalling the result of another expression is not supported', n.line)
         name = f.fields[0].text
-        # a function or class the module defines or imports under a built-in's name wins over the built-in (D108a): `own`. A name the
-        # compiler's own desugaring wrote (f.core: the len of an enumerate loop, the str of an f-string) is always the built-in
+        # a variable or parameter of the function wins over every function, class and built-in of its name, as in Python (D125a): it is
+        # called when it holds a function value, and calling anything else is an error. This is the innermost name, so it is looked at
+        # first. A name the compiler's own desugaring wrote (f.core: the len of an enumerate loop, the str of an f-string) is never the
+        # user's variable, whatever the function calls its variables
+        if name in self.slots and not f.core:
+            if not is_fn(self.types[name]):
+                raise CompileError(self.unknown_function(name), n.line)
+            self.async_ok = False
+            self.kw = n.fields[2].items
+            return self.call_value(self.expr(f), val_nodes(n.fields[1]), n.line, "the function value '" + name + "'")
+        # a function or class the module defines or imports under a built-in's name wins over the built-in (D108a): `own`
         own = name in ['print', 'open', 'len', 'range'] and not f.core and self.mod.shadows(name)
         res = self.mod.resolve_core(name) if f.core else self.mod.resolve(name)
         if len(n.fields[2].items) > 0 and name in ['print', 'open', 'len', 'str', 'int', 'input', 'sleep'] and not own:
             raise CompileError(f"'{name}' does not take keyword arguments", n.line)
         args = val_nodes(n.fields[1])
-        if name in self.slots and is_fn(self.types[name]):
-            self.async_ok = False
-            self.kw = n.fields[2].items
-            return self.call_value(self.expr(f), args, n.line, "the function value '" + name + "'")
-        if res == '' and name not in self.slots:
+        if res == '':
             self.async_ok = False       # builtins are plain calls; their arguments are not awaited
-        if self.bail != '' and name not in self.slots and res == 'math.sqrt' and len(args) == 1 and len(n.fields[2].items) == 0 and (self.peek_type(args[0]) == 'float' or self.peek_type(args[0]) == 'int'):
+        if self.bail != '' and res == 'math.sqrt' and len(args) == 1 and len(n.fields[2].items) == 0 and (self.peek_type(args[0]) == 'float' or self.peek_type(args[0]) == 'int'):
             return self.fast_sqrt(args[0])
         if name == 'print' and not own:
             if not statement:
@@ -7220,23 +7228,23 @@ class Gen:
             return ex('', '')
         if name == 'open' and not own:
             return self.open_call(args, n.line)
-        if name == 'input' and name not in self.slots and res == '':
+        if name == 'input' and res == '':
             return self.input_call(args, n.line)
-        if name == 'clock' and name not in self.slots and res == '':
+        if name == 'clock' and res == '':
             if len(args) > 0:
                 raise CompileError('clock() takes no arguments', n.line)
             c = self.tmp('clock')
             self.emit(f'{c} = call double @tomato_clock()')
             return self.bf_plain(c)
-        if name == 'sleep' and name not in self.slots and res == '':
+        if name == 'sleep' and res == '':
             raise CompileError("sleep() is async, so it must be awaited\nwrite: await sleep(seconds)  inside an async def", n.line)
-        if name == '_http_wait' and name not in self.slots and res == '':
+        if name == '_http_wait' and res == '':
             raise CompileError("_http_wait() is async, so it must be awaited\nwrite: await _http_wait(handle)  inside an async def", n.line)
-        if (name == '_settle' or name == '_park' or name == '_fd_wait') and name not in self.slots and res == '':
+        if (name == '_settle' or name == '_park' or name == '_fd_wait') and res == '':
             raise CompileError(f"{name}() is async, so it must be awaited\nwrite: await {name}(...)  inside an async def", n.line)
-        if name == '_unpark' and name not in self.slots and res == '':
+        if name == '_unpark' and res == '':
             return self.unpark_call(args, n.line)
-        if name == '_site' and name not in self.slots and res == '':
+        if name == '_site' and res == '':
             # the line where the async function running now was called (std/asyncio's Lock records where it was taken)
             if len(args) != 0 or not self.is_async:
                 raise CompileError('_site() takes no arguments and can only be used inside an async function', n.line)
@@ -7247,11 +7255,11 @@ class Gen:
             return self.len_call(args, n.line)
         if name == 'str':
             return self.str_call(args, n.line)
-        if name == '_repr_box' and len(args) == 1 and name not in self.slots and res == '':
+        if name == '_repr_box' and len(args) == 1 and res == '':
             # the text of a union value inside a printed container: text is quoted, as Python does
             bv = self.expr(args[0])
             return self.union_text(bv, True, n.line)
-        if name == '_format_spec' and len(args) == 2 and name not in self.slots and res == '':
+        if name == '_format_spec' and len(args) == 2 and res == '':
             return self.format_call(args, n.line)
         if name == 'float' and len(args) == 1:
             return self.float_call(self.expr(args[0]), n.line)
@@ -7261,27 +7269,27 @@ class Gen:
                 return self.float_to_int(conv, n.line)
             return self.convert_explicit(conv, 'int', n.line)
         # these do no type checks: only the compiler's own helpers (key_helper_source), which are compiled in the module builtin, may use them
-        if name in ['_hash_mix', '_dict_next', '_dict_key', '_same', '_isa', '_cast'] and self.mod.cur == 'builtin' and name not in self.slots and res == '':
+        if name in ['_hash_mix', '_dict_next', '_dict_key', '_same', '_isa', '_cast'] and self.mod.cur == 'builtin' and res == '':
             return self.hash_intrinsic(name, args, n.line)
         key = res
-        if key == '' and name == 'hash' and name not in self.slots:
+        if key == '' and name == 'hash':
             return self.hash_call(args, n.line)
-        if key == '' and name in ['abs', 'chr', 'ord'] and name not in self.slots:
+        if key == '' and name in ['abs', 'chr', 'ord']:
             return self.number_text_builtin(name, args, n.line)
-        if key == '' and name == 'round' and name not in self.slots:
+        if key == '' and name == 'round':
             return self.round_call(args, n.fields[2].items, n.line)
-        if key == '' and name in ['divmod', 'any', 'all'] and name not in self.slots:
+        if key == '' and name in ['divmod', 'any', 'all']:
             # written in Tomato, in std/builtin/ (_divmod in numbers.tom, _any and _all in lists.tom)
             self.kw = n.fields[2].items
             return self.helper_call('_' + name, name, ex('', ''), args, n.line)
         if key == '' and name == 'sorted' and len(n.fields[2].items) > 0:
             return self.sorted_by(args, n.fields[2].items, n.line)
-        if key == '' and (name == 'map' or name == 'filter') and name not in self.slots:
+        if key == '' and (name == 'map' or name == 'filter'):
             return self.map_filter(name, args, n.fields[2].items, n.line)
         if key == '' and name in ['sorted', 'reversed', 'sum', 'min', 'max']:
             self.kw = []
             return self.list_builtin(name, args, n.line)
-        if name == 'range' and name not in self.slots and not own:
+        if name == 'range' and not own:
             # range(...) is a value of the builtin class `range` (std/builtin/range.tom); range(a, b, c) is its constructor
             if len(args) < 1 or len(args) > 3 or len(n.fields[2].items) > 0:
                 raise CompileError('range() takes 1 to 3 whole-number arguments: range(stop), range(start, stop) or range(start, stop, step)', n.line)
@@ -7300,7 +7308,7 @@ class Gen:
             if len(n.fields[2].items) > 0:
                 raise CompileError('keyword arguments are not supported when creating an object\npass the arguments by position', n.line)
             return self.construct(self.mod.find_class(key, n.line), args, n.line)
-        if key in self.mod.consts and name not in self.slots:
+        if key in self.mod.consts:
             raise CompileError(f"'{name}' is a constant, not a function, so it cannot be called", n.line)
         if self.mod.mode == 2 and self.mod.late and len(n.fields[2].items) == 0 and len(args) > 0:
             floats = True
@@ -9716,7 +9724,10 @@ class Gen:
 
     def unknown_function(self, name: str) -> str:
         if name in self.slots:
-            return f"'{name}' is a variable, not a function, so it cannot be called"
+            text = f"'{name}' is a variable, not a function, so it cannot be called"
+            if self.mod.resolve(name) != '' or name in builtin_names():
+                text += f"\nthe variable hides the function or class '{name}' here; rename the variable to call it"
+            return text
         if name in ['reduce']:
             return f"'{name}' is not available\nuse a for loop instead"
         if name in ['pow', 'input', 'list', 'dict', 'set', 'tuple', 'bool', 'type', 'isinstance', 'format']:
@@ -9819,7 +9830,7 @@ class Gen:
     def nest_start_ok(self, s: Node) -> bool:
         if self.mod.mode != 2 or self.nest != '' or self.nest_off or self.is_async or self.gen_n > 0 or self.facts_off > 0 or self.try_depth > 0:
             return False
-        if self.mod.shadows('range') or self.mod.shadows('len'):
+        if self.mod.shadows('range') or self.mod.shadows('len') or 'range' in self.hidden or 'len' in self.hidden:
             return False                # nest_shape reads range loops by name, and the bounds are checked by what len is
         if node_count(s, NEST_NODES) > NEST_NODES or not nest_shape(s):
             return False
@@ -12784,6 +12795,9 @@ def compile_function(f: Node, mod: Mod, info: FuncInfo, small: bool = False):
     big = ''
     names = param_names(f)
     types = param_types(f, info)
+    g.hidden = [nm for nm in names]
+    for st in val_nodes(f.fields[3]):
+        bound_names(st, g.hidden)
     restart = small and info.owner == '' and mod.pure(info.key)      # see small_thunk
     if not small and has_small(mod, info) and info.owner == '' and mod.pure(info.key):
         small_thunk(f, mod, info)

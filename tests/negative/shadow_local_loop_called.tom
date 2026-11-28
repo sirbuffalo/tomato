@@ -1,0 +1,9 @@
+# a loop variable is a variable of the function, and it is still there after the loop
+def f(xs: list[int]) -> int:  # allow: shadow
+    for sum in xs:
+        pass
+    return sum(xs)
+
+@main
+def main():
+    print(f([1, 2]))

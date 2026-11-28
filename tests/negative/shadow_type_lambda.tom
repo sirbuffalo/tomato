@@ -1,0 +1,6 @@
+def f(xs: list[int]) -> list[int]:
+    return sorted(xs, key=float -> 0 - float)
+
+@main
+def main():
+    print(f([1]))

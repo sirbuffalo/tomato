@@ -1,0 +1,11 @@
+# until its first assignment the name is the function, afterwards the variable
+def total(xs: list[int]) -> int:
+    return 1
+
+def f(xs: list[int]) -> int:
+    total = total(xs)  # allow: shadow
+    return total(xs)
+
+@main
+def main():
+    print(f([1]))

@@ -620,3 +620,4 @@ MsgpackError the float {} cannot be written as MessagePack
 ValueError {} value cannot be written as TOML
 ConfigError {}: the word given to tomato seed add is not a host shortcut (gh:USER/REPO, gitlab:USER/REPO, codeberg:USER/REPO, srht:~USER/REPO) or a seed name, or a shortcut has none of --rev, --tag and --branch
 ConfigError {}: the "# seeds:" line of a program cannot be used: it is not NAME or NAME>=VERSION separated by commas, or there is no project that lists the seeds it names, or a locked seed is older than it asks
+CompileError '{}' is the name of a built-in type, so a variable cannot have it

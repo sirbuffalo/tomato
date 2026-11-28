@@ -1,0 +1,5 @@
+# a variable that holds a number hides the built-in of its name: max([1, 2]) calls the number
+@main
+def main():
+    max = 5  # allow: shadow
+    print(max([1, 2]))

@@ -1,0 +1,10 @@
+# a variable named zip is not the built-in zip of a for loop
+def f(xs: list[int], ys: list[int]) -> int:  # allow: shadow
+    zip = 4
+    for a, b in zip(xs, ys):
+        pass
+    return zip
+
+@main
+def main():
+    print(f([1], [2]))

@@ -465,7 +465,7 @@ t_release_error_line() {
   done
 }
 section "== release mode (AddressSanitizer; the same output as debug mode) =="
-for name in fast_paths loop_nests float_loops float_nests int_ranges int_fast_paths small_int_loops int_boundary temp_unwind native_sort compact_lists containers raise_paths raise_dead file_closed sys_run sys_async optional_narrowing_flow optional_narrowing_assign optional_compound_assign union_narrowing_nests type_is type_is_nests type_is_class type_is_class_nests shadow_functions shadow_classes bare_raise bare_raise_async; do
+for name in fast_paths loop_nests float_loops float_nests int_ranges int_fast_paths small_int_loops int_boundary temp_unwind native_sort compact_lists containers raise_paths raise_dead file_closed sys_run sys_async optional_narrowing_flow optional_narrowing_assign optional_compound_assign union_narrowing_nests type_is type_is_nests type_is_class type_is_class_nests shadow_functions shadow_classes bare_raise bare_raise_async shadow_locals shadow_core; do
   case "$name" in fast_paths|loop_nests|float_loops|float_nests|int_ranges|containers|raise_paths|raise_dead|file_closed) ;; *) [ -n "$fast" ] && { skip "release $name"; continue; } ;; esac   # (the fast tier: nine of the fifteen)
   case "$name" in fast_paths|loop_nests|float_loops|float_nests|raise_paths|raise_dead|sys_run|sys_async|optional_compound_assign|union_narrowing_nests) spawn_first t_release_asan "$name" leaks ;; *) spawn_first t_release_asan "$name" ;; esac
 done
@@ -664,7 +664,7 @@ t_highlighter_lists() { r="$(sh tests/highlighter_lists.sh 2>&1)"; [ "$r" = ok ]
 t_wasm_site_editor() { r="$(jsc tests/site_editor.js 2>&1)"; [ "$r" = ok ] && ok "website: editor auto-indent after a colon, backspace and tab" || bad "website: editor auto-indent" "$r"; }
 t_wasm_missing() { [ -n "$CI" ] && bad "wasm path" "jsc (macOS) or node is required in CI" || echo "skip: neither jsc nor node is available on this system"; }
 if [ -n "$have_js" ]; then
-  for name in optional_interface import_as trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles angle_lists at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show optional_values optional_lookups optional_narrowing optional_narrowing_flow optional_narrowing_assign optional_compound_assign union_narrowing_nests type_is type_is_nests type_is_class type_is_class_nests type_in_old optional_error_paths shadow_functions shadow_print shadow_library shadow_classes shadow_std bare_raise bare_raise_async time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser terminal_browser string_io assert_ok testing_lib testing_diff float_any_size float_floor_mod float_ownership float_loops float_keys float_nests float_library float_limits; do
+  for name in optional_interface import_as trig_radians wave2_bytes hashlib_browser hmac_vectors struct_ints struct_floats angles angle_lists at_neg_rmul containers compact_lists compact_fuzz open_errors msgpack_file_basics unicode_case list_methods finally inheritance fixed_width text_and_maps modules numbers_rules range_value iter_protocol async_tasks async_toolkit async_sync async_queue_drop generics bigint_ops bigint_ownership bigint_frames bigint_unwind big_karatsuba big_division function_values lambdas sort_stable sort_errors sort_key_cmp cache_lru cache_multi memoize bit_types bit_names builtin_layout text_dict_methods dict_literal_inference dict_keys_any dict_keys_objects dict_keys_forms dict_keys_cycles tuple_for unicode_class mixed_tuples union_show optional_values optional_lookups optional_narrowing optional_narrowing_flow optional_narrowing_assign optional_compound_assign union_narrowing_nests type_is type_is_nests type_is_class type_is_class_nests type_in_old optional_error_paths shadow_functions shadow_print shadow_library shadow_classes shadow_std shadow_locals shadow_core bare_raise bare_raise_async time_module int_ranges range_wide int_to_float fast_ranges tuple_type_args url_parse url_quote html_escape base64_codec hex_codec web_modules datetime_arith datetime_format datetime_parse csv_module textwrap_module statistics_module re_api ospath_text os_browser terminal_browser string_io assert_ok testing_lib testing_diff float_any_size float_floor_mod float_ownership float_loops float_keys float_nests float_library float_limits; do
     wasm_program "$name"
   done
   spawn_free t_wasm_browser
@@ -674,6 +674,8 @@ if [ -n "$have_js" ]; then
   wasm_neg type_mismatch "cannot use '+' with int and str"
   wasm_neg shadow_type_function "'str' is the name of a built-in type, so it cannot be defined here"
   wasm_neg shadow_len_own_signature "argument 1 of 'len' (the parameter 'x') has type str, but int is expected"
+  wasm_neg shadow_local_param_called "'len' is a variable, not a function, so it cannot be called"
+  wasm_neg shadow_type_param "'str' is the name of a built-in type, so a variable cannot have it"
   wasm_neg fixed_range "300 does not fit in uint[length=8]"
   wasm_neg float_length_32 "float has no length"
   wasm_neg float_length_key "float has no length"
@@ -3309,6 +3311,24 @@ neg bare_raise_outside "'raise' with no error can only be used inside a 'catch' 
 neg bare_raise_in_function "'raise' with no error can only be used inside a 'catch' block"
 neg bare_raise_in_finally "'raise' with no error can only be used inside a 'catch' block"
 neg bare_raise_in_try_body "'raise' with no error can only be used inside a 'catch' block"
+neg shadow_local_param_called "'len' is a variable, not a function, so it cannot be called"
+neg shadow_local_assigned_called "'max' is a variable, not a function, so it cannot be called"
+neg shadow_local_loop_called "'sum' is a variable, not a function, so it cannot be called"
+neg shadow_local_comprehension_called "'len' is a variable, not a function, so it cannot be called"
+neg shadow_local_catch_called "'len' is a variable, not a function, so it cannot be called"
+neg shadow_local_unpacked_called "'len' is a variable, not a function, so it cannot be called"
+neg shadow_local_lambda_called "'len' is a variable, not a function, so it cannot be called"
+neg shadow_local_method_called "'len' is a variable, not a function, so it cannot be called"
+neg shadow_local_function_called "'total' is a variable, not a function, so it cannot be called"
+neg shadow_local_before_binding "'total' is a variable, not a function, so it cannot be called"
+neg shadow_local_lambda_outer "a lambda cannot use the variable 'len' from the function around it"
+neg shadow_local_zip_called "'zip' is a variable, not a function, so it cannot be called"
+neg shadow_type_param "'str' is the name of a built-in type, so a variable cannot have it"
+neg shadow_type_local "'list' is the name of a built-in type, so a variable cannot have it"
+neg shadow_type_loop "'int' is the name of a built-in type, so a variable cannot have it"
+neg shadow_type_catch "'set' is the name of a built-in type, so a variable cannot have it"
+neg shadow_type_lambda "'float' is the name of a built-in type, so a variable cannot have it"
+neg shadow_type_method "'dict' is the name of a built-in type, so a variable cannot have it"
 neg fixed_int_or_none "'int[length=8]' cannot be combined with None, because only int, float, bool, str, lists, dicts, sets, classes and tuples can be None"
 neg list_of_fixed_or_none "'uint[length=16]' cannot be combined with None"
 neg param_fixed_or_none "'int[length=32]' cannot be combined with None"

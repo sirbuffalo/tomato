@@ -103,7 +103,7 @@ release-mode output change.
 > and a name it brings in with `from m import name`, wins over a builtin of that name inside that module only; the code
 > the compiler writes for f-strings, `assert`, unpacking, `enumerate`/`zip` loops and comprehensions keeps the builtins;
 > the standard library is unaffected; the names of the built-in types (`int`, `uint`, `float`, `bool`, `str`, `File`,
-> `list`, `dict`, `set`, `tuple`) stay reserved, and defining one is a compile error (E608). The text below is the
+> `list`, `dict`, `set`, `tuple`) stay reserved, and defining one is a compile error (E608). A local variable or parameter shadows a builtin too, in calls as well (Davis, the same day; D125a), and a variable named like a built-in type is E623. The text below is the
 > original problem statement; the "today" in it is before D108a.
 
 **Problem.** A program can define its own top-level function `len`, and the builtin still wins. Nothing warns about it:

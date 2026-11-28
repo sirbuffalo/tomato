@@ -254,3 +254,5 @@ error_tree
 bare_raise
 bare_raise_async
 optional_interface
+shadow_locals
+shadow_core

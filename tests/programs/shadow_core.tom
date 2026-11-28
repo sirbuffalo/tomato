@@ -1,0 +1,108 @@
+# What the compiler writes itself keeps using the built-ins in a function whose variables or parameters have the names of the built-ins it
+# uses (D125a): f-strings (str and the format helper), assert (AssertionError), the length check of an unpacking (len, ValueError, str),
+# `for i, x in enumerate(xs)` and `for a, b in zip(xs, ys)` (range, len) and comprehensions of them, `for ... in range(n)`'s fast paths,
+# the iteration protocol (@iter). Every variable below has such a name and holds a plain value, so the built-in cannot be called there
+# by the user's own code (that is shadow_locals.tom); each function only returns what it computed, the one place that prints is main.
+
+class Countdown:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    @iter
+    def items(self) -> int:
+        i = self.n
+        while i > 0:
+            yield i
+            i -= 1
+
+    @len
+    def size(self) -> int:
+        return self.n
+
+# f-strings with and without a format spec, in a function whose variables are named like what they use
+def fstrings(range: int, len: int, print: int, iter: int) -> str:  # allow: shadow
+    sum = range + len + print + iter  # allow: shadow
+    return f'{range}/{len}/{print}/{iter} total {sum} {sum:>6}|{sum:<6}|{3.14159:.2f}|{"x" * 2}'
+
+# assert that holds, and one that fails: the error is the built-in AssertionError whatever the function calls its variables
+def asserts(AssertionError: int, ValueError: int, hash: int) -> str:  # allow: shadow
+    assert AssertionError + ValueError + hash > 0, f'sum is {hash}'
+    try:
+        assert hash == 1, f'hash was {hash}'
+    catch Error as e:
+        return e.message
+    return 'no error'
+
+# the unpacking checks of `a, b = xs` and of a for loop over tuples
+def unpacking(len: int, range: int) -> str:  # allow: shadow
+    xs = [len, range]
+    a, b = xs
+    out = f'{a} {b}'
+    for c, d in [(1, 2), (3, 4)]:
+        out += f' {c}{d}'
+    try:
+        _e, _f, _g = xs
+    catch ValueError as err:
+        out += ' | ' + err.message
+    return out
+
+# enumerate and zip loops, and comprehensions over them, with variables named range and len
+def pairs(range: int, len: int, open: int, input: int) -> str:  # allow: shadow
+    xs = [range, len, open, input]
+    ys = [10, 20, 30]
+    out = ''
+    for i, x in enumerate(xs):
+        out += f'{i}:{x} '
+    for a, b in zip(xs, ys):
+        out += f'{a}+{b} '
+    ps = [i * x for i, x in enumerate(xs)]
+    qs = [a + b for a, b in zip(xs, ys)]
+    return out + f'{ps} {qs}'
+
+# a function that is a range loop in release mode (fast loops and nests) with variables that are not the built-ins' names but a len and a
+# range that are values, in other functions of the module
+def loops(n: int) -> int:
+    total = 0
+    for i in range(n):
+        for j in range(i):
+            total += i * j + len([i, j])
+    return total
+
+def loop_with_names(n: int, min: int, max: int) -> int:  # allow: shadow
+    total = 0
+    for i in range(n):
+        total += min + max + i
+    return total
+
+# the iteration protocol and the length operator of a class, with variables named iter and len
+def protocol(iter: int, len: int, next: int) -> str:  # allow: shadow
+    c = Countdown(3)
+    out = ''
+    for x in c:
+        out += f'{x} '
+    return out + f'{len + iter + next}'
+
+# comprehensions and conditional expressions with such names
+def comprehensions(sorted: int, max: int, map: int) -> str:  # allow: shadow
+    xs = [sorted, max, map, 4]
+    evens = [x for x in xs if x % 2 == 0]
+    return f'{evens} {[x * 2 for x in evens]}'
+
+# a lambda is a function of its own: its parameters, and nothing of the function around it
+def lambdas(max: int, sum: int) -> str:  # allow: shadow
+    xs = [max, sum, 2]
+    return f'{sorted(xs, key=x -> 0 - x)} {map(x -> x + 1, xs)}'
+
+@main
+def main():
+    print(fstrings(1, 2, 3, 4))
+    print(asserts(1, 2, 3))
+    print(unpacking(5, 6))
+    print(pairs(7, 8, 9, 10))
+    print(loops(6), loop_with_names(5, 1, 2))
+    print(protocol(1, 2, 3))
+    print(comprehensions(1, 2, 3))
+    print(lambdas(4, 5))

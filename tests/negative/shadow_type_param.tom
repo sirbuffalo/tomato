@@ -1,0 +1,7 @@
+# a type name always means the built-in type: no parameter has one (D125a), as no module defines one (D108a)
+def f(str: int) -> int:
+    return str
+
+@main
+def main():
+    print(f(1))

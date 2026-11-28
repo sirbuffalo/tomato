@@ -1,0 +1,11 @@
+# so is the name of a catch
+def f(xs: list[int]) -> int:  # allow: shadow
+    try:
+        raise ValueError("x")
+    catch ValueError as len:
+        pass
+    return len(xs)
+
+@main
+def main():
+    print(f([1]))

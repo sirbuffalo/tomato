@@ -1,0 +1,10 @@
+def f() -> int:
+    try:
+        raise ValueError("x")
+    catch ValueError as set:
+        return 1
+    return 0
+
+@main
+def main():
+    print(f())

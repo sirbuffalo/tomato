@@ -1,0 +1,7 @@
+def f() -> int:
+    list = [1, 2]
+    return len(list)
+
+@main
+def main():
+    print(f())

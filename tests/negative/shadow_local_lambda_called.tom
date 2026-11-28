@@ -1,0 +1,7 @@
+# a lambda parameter of a built-in name is a value of the type the lambda is given
+def f(xs: list[int]) -> list[int]:
+    return sorted(xs, key=len -> len(len))  # allow: shadow
+
+@main
+def main():
+    print(f([1]))

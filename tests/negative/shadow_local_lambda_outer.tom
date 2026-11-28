@@ -1,0 +1,8 @@
+# a lambda cannot reach the variables of its function, the variable len among them
+def f(xs: list[int]) -> list[int]:
+    len = 3  # allow: shadow
+    return sorted(xs, key=x -> len(xs) - x)
+
+@main
+def main():
+    print(f([1]))

@@ -1,0 +1,8 @@
+# so is the variable of a comprehension (D53c)
+def f(xs: list[str]) -> int:  # allow: shadow
+    ys = [len for len in xs]
+    return len(ys)
+
+@main
+def main():
+    print(f(["a"]))

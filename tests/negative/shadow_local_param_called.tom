@@ -1,0 +1,7 @@
+# a parameter named like a built-in hides it in calls (D125a): len is an int here, and an int is not called
+def count(len: int, xs: list[int]) -> int:  # allow: shadow
+    return len(xs)
+
+@main
+def main():
+    print(count(1, [1, 2]))

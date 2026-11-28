@@ -1,0 +1,11 @@
+# the variable hides a function of the module as well: a call is the variable, and a number is not called
+def total(xs: list[int]) -> int:
+    return 1
+
+def f(xs: list[int]) -> int:
+    total = 3  # allow: shadow
+    return total(xs)
+
+@main
+def main():
+    print(f([1]))

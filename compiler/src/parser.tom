@@ -57,6 +57,28 @@ def top_level_names(toks: list[Token]) -> list[str]:
                 j += 1
     return out
 
+def pair_locals(toks: list[Token], start: int) -> list[str]:
+    # the names `enumerate` and `zip` that the function starting at token `start` uses other than as a call, `zip(xs, ys)`: a variable or
+    # parameter of that name (D125a), which `for a, b in zip(xs, ys)` must not be written out around, as the compiler's own index loop
+    out: list[str] = []
+    depth = 0
+    started = False
+    j = start
+    while j < len(toks):
+        t = toks[j]
+        if t.kind == 'INDENT':
+            depth += 1
+            started = True
+        elif t.kind == 'DEDENT':
+            depth -= 1
+            if started and depth == 0:
+                break
+        elif t.kind == 'NAME' and (t.text == 'enumerate' or t.text == 'zip') and not (j + 1 < len(toks) and toks[j + 1].kind == 'OP' and toks[j + 1].text == '('):
+            if t.text not in out:
+                out.append(t.text)
+        j += 1
+    return out
+
 # marks the names that stand for a function called in generated code (len, range, str, ValueError, AssertionError) as the built-ins
 def mark_core(v: Val):
     if v.tag == 'n' and v.node is not None:
@@ -315,6 +337,7 @@ export class Parser:
     unpacks: int = 0        # how many multiple assignments have been read (they name their hidden variables)
     yields: int = 0         # how many yield statements have been read so far (a function with any is a generator)
     own: list[str] = []     # the names the module defines or imports at its top level (see top_level_names)
+    local_own: list[str] = []   # the enumerate or zip the function being read has as a variable (see pair_locals)
     catches: list[int] = []  # the catch blocks being read in this function, innermost last: 1 once a bare `raise` has been seen in one (D114a)
 
     def cur(self) -> Token:
@@ -688,6 +711,8 @@ export class Parser:
         is_private = self.accept_kw('private')
         name = self.expect('NAME').text
         tparams = self.type_params()
+        outer_locals = self.local_own
+        self.local_own = pair_locals(self.toks, self.p)
         params = self.params()
         ret = vz()
         if self.accept_op('->'):
@@ -700,12 +725,14 @@ export class Parser:
             if self.is_op(':'):
                 raise ParseError('an interface method has no body\nwrite only its signature', line)
             self.expect('NEWLINE')
+            self.local_own = outer_locals
             return self.with_params(mk('FuncDef', line, [vs(name), vnodes(params), ret, vz(), vb(is_private), vb(is_override), vopt_text(marker), vb(False), vb(is_async), yt]), tparams)
         self.expect_op(':')
         before = self.yields
         outer_catches = self.catches
         self.catches = []                   # a bare `raise` belongs to a catch block of the same function
         body = self.block()
+        self.local_own = outer_locals
         self.catches = outer_catches
         return self.with_params(mk('FuncDef', line, [vs(name), vnodes(params), ret, vnodes(body), vb(is_private), vb(is_override), vopt_text(marker), vb(self.yields > before), vb(is_async), yt]), tparams)
 
@@ -853,7 +880,7 @@ export class Parser:
         return mk('For', line, fields)
 
     def pairing(self, it: Node) -> str:
-        return pairing_call(it, self.own)
+        return pairing_call(it, self.own + self.local_own)
 
     def pairs_for(self, line: int, names: list[str], it: Node, body: list[Node]) -> Node:
         # for i, x in enumerate(xs) and for a, b in zip(xs, ys) are written as ordinary index loops

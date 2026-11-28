@@ -1,0 +1,14 @@
+# the parameter of a method hides the built-in too
+class Box:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    def size(self, len: list[int]) -> int:  # allow: shadow
+        return len(len) + self.n
+
+@main
+def main():
+    print(Box(1).size([1]))

@@ -1,0 +1,166 @@
+# A local variable or a parameter hides a built-in, a function or a class of its name everywhere in its function, calls included (D125a),
+# as in Python: the innermost name wins. Here each name holds a function, so the call goes to it; the line after each is the built-in
+# or the module's own function it hides. Every use of a name that hides is silenced with `# allow: shadow`; what the compiler writes
+# itself (for loops, f-strings, assert, unpacking, comprehensions) keeps using the built-ins in the same functions (shadow_core.tom).
+
+def twice(x: int) -> int:
+    return x * 2
+
+def thrice(x: int) -> int:
+    return x * 3
+
+def bang(s: str) -> str:
+    return s + '!'
+
+def total(xs: list[int]) -> int:
+    return 100
+
+def pick(flag: bool) -> fn(int) -> int:
+    if flag:
+        return twice
+    return thrice
+
+# a parameter named like a built-in
+def with_len(len: fn(int) -> int, n: int) -> int:  # allow: shadow
+    return len(n) + 1
+
+def with_max(max: fn(int, int) -> int) -> int:  # allow: shadow
+    return max(3, 9)
+
+def with_print(print: fn(str) -> str) -> str:  # allow: shadow
+    return print('hi')
+
+def with_range(range: fn(int) -> int, sum: fn(int) -> int) -> int:  # allow: shadow
+    return range(1) + sum(2)
+
+def with_total(total: fn(int) -> int) -> int:  # allow: shadow
+    return total(5)
+
+# a variable assigned from an expression
+def assigned(flag: bool) -> int:
+    len = pick(flag)  # allow: shadow
+    return len(10)
+
+def declared() -> int:
+    abs: fn(int) -> int = twice  # allow: shadow
+    sum: fn(int) -> int = x -> x + 1000  # allow: shadow
+    return abs(4) + sum(4)
+
+# the right side of the first assignment still means the function it hides: the variable is bound after it is computed
+def own_name(xs: list[int]) -> int:
+    total = total(xs) + 1  # allow: shadow
+    return total
+
+# a loop variable, in the body and after the loop
+def loop_variable() -> int:  # allow: shadow
+    fs = [twice, thrice]
+    out = 0
+    for len in fs:
+        out += len(7)
+    return out + len(1)
+
+# a comprehension variable (it is a variable of the function, as in a for loop)
+def comprehension() -> list[int]:  # allow: shadow
+    fs = [twice, thrice, pick(True)]
+    return [max(5) for max in fs]
+
+# a lambda's parameter, and a lambda that is called with a function
+def call_with(f: fn(fn(int) -> int) -> int, g: fn(int) -> int) -> int:
+    return f(g)
+
+def lambda_parameter() -> int:
+    return call_with(len -> len(8) + len(1), twice)  # allow: shadow
+
+def sorted_by(xs: list[int]) -> list[int]:
+    return sorted(xs, key=sum -> 0 - sum)  # allow: shadow
+
+# a catch variable is a variable: it is used as one
+def catch_variable() -> str:  # allow: shadow
+    try:
+        raise ValueError('oops')
+    catch ValueError as len:
+        return len.message + '?'
+
+# names bound by an unpacking
+def unpacked() -> int:
+    len, max = twice, thrice  # allow: shadow
+    return len(2) + max(2)
+
+def unpacked_loop() -> list[int]:
+    out: list[int] = []
+    pairs = [(twice, 1), (thrice, 2)]
+    for sum, n in pairs:  # allow: shadow
+        out.append(sum(n))
+    return out
+
+# a function value read from a field and called through a variable of a built-in's name
+class Ops:
+    op: fn(int) -> int
+
+    @init
+    def make(self, op: fn(int) -> int):
+        self.op = op
+
+    def run(self, len: fn(int) -> int, n: int) -> int:  # allow: shadow
+        return len(n) + self.op(n)
+
+    # a method named like a built-in is a method: it is reached with a dot only
+    def max(self, n: int) -> int:
+        return n * 10
+
+    def len(self) -> int:
+        return 7
+
+def methods() -> int:
+    o = Ops(thrice)
+    return o.run(twice, 5) + o.max(2) + o.len()
+
+# a variable that is not a function: it is an ordinary value, and a built-in of the same name is still used by the other functions
+def plain_value(xs: list[int]) -> int:
+    max = 0  # allow: shadow
+    sum = 0  # allow: shadow
+    for x in xs:
+        sum += x
+        if x > max:
+            max = x
+    return max * 1000 + sum
+
+def after() -> int:
+    return len([1, 2, 3]) + max([4, 9, 2]) + sum([1, 2, 3])
+
+# the module's own function is called until a variable takes its name (then the variable is the name), and in another function it is still the function
+def before_and_after(xs: list[int]) -> int:
+    first = total(xs)
+    total = twice  # allow: shadow
+    return first + total(1)
+
+def elsewhere(xs: list[int]) -> int:
+    return total(xs)
+
+# a variable named like a class, and like a built-in class
+class Point:
+    x: int
+
+    @init
+    def make(self, x: int):
+        self.x = x
+
+def make_point(Point: fn(int) -> int) -> int:  # allow: shadow
+    return Point(4)
+
+def class_instance() -> int:
+    return Point(5).x
+
+@main
+def main():
+    print(with_len(twice, 4), with_max(max_of_two), with_print(bang), with_range(twice, thrice), with_total(twice))
+    print(assigned(True), assigned(False), declared(), own_name([1, 2]))
+    print(loop_variable(), comprehension(), lambda_parameter(), sorted_by([3, 1, 2]))
+    print(catch_variable(), unpacked(), unpacked_loop(), methods())
+    print(plain_value([3, 9, 4]), after(), before_and_after([1]), elsewhere([1]))
+    print(make_point(twice), class_instance())
+
+def max_of_two(a: int, b: int) -> int:
+    if a > b:
+        return a
+    return b

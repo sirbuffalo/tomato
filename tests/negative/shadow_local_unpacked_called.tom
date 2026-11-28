@@ -1,0 +1,8 @@
+# names bound by an unpacking
+def f(xs: list[int]) -> int:
+    len, other = 1, 2  # allow: shadow
+    return len(xs) + other
+
+@main
+def main():
+    print(f([1]))

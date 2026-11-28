@@ -1,0 +1,13 @@
+class Box:
+    n: int
+
+    @init
+    def make(self, n: int):
+        self.n = n
+
+    def add(self, dict: int) -> int:
+        return self.n + dict
+
+@main
+def main():
+    print(Box(1).add(2))
